@@ -3428,7 +3428,7 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
         if ADD_PLAYLISTS_TO_MONITOR:
             # Assuming your list is stored in a variable called playlists
             playlists.extend(ADD_PLAYLISTS_TO_MONITOR)
-            playlists_count += len(playlists)
+            playlists_count += len(ADD_PLAYLISTS_TO_MONITOR)
 
     recently_played_artists = sp_user_data["sp_user_recently_played_artists"]
 
@@ -3784,7 +3784,7 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
             if ADD_PLAYLISTS_TO_MONITOR:
                 # Assuming your list is stored in a variable called playlists
                 playlists.extend(ADD_PLAYLISTS_TO_MONITOR)
-                playlists_count += len(playlists)
+                playlists_count += len(ADD_PLAYLISTS_TO_MONITOR)
 
         recently_played_artists = sp_user_data["sp_user_recently_played_artists"]
 
