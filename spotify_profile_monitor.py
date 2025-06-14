@@ -136,6 +136,13 @@ DETECT_CHANGES_IN_PLAYLISTS = True
 # Can also be enabled via the -k flag
 GET_ALL_PLAYLISTS = False
 
+# Specify additional playlists to monitor as a list of dictionairies
+# ADD_PLAYLISTS_TO_MONITOR = [
+    # {'uri': 'spotify:playlist:abc123', 'owner_name': 'user1', 'owner_uri': 'spotify:user:user1'},
+    # {'uri': 'spotify:playlist:def456', 'owner_name': 'user2', 'owner_uri': 'spotify:user:user2'}
+# ]
+ADD_PLAYLISTS_TO_MONITOR = ""
+
 # Ignore Spotify-owned playlists when monitoring?
 # Set to True to avoid tracking Spotify-generated playlists that often change frequently (likes, tracks etc.)
 IGNORE_SPOTIFY_PLAYLISTS = True
@@ -350,6 +357,7 @@ IMGCAT_PATH = ""
 SP_SHA256 = ""
 DETECT_CHANGES_IN_PLAYLISTS = False
 GET_ALL_PLAYLISTS = False
+ADD_PLAYLISTS_TO_MONITOR = ""
 IGNORE_SPOTIFY_PLAYLISTS = False
 PLAYLISTS_LIMIT = 0
 RECENTLY_PLAYED_ARTISTS_LIMIT = 0
@@ -3396,6 +3404,11 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
         playlists_count = sp_user_data["sp_user_public_playlists_count"]
         playlists = sp_user_data["sp_user_public_playlists_uris"]
 
+        if ADD_PLAYLISTS_TO_MONITOR:
+            # Assuming your list is stored in a variable called playlists
+            playlists.extend(ADD_PLAYLISTS_TO_MONITOR)
+            playlists_count += len(playlists)
+
     recently_played_artists = sp_user_data["sp_user_recently_played_artists"]
 
     print(f"Username:\t\t\t{username}")
@@ -3746,6 +3759,11 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
         if DETECT_CHANGES_IN_PLAYLISTS:
             playlists_count = sp_user_data["sp_user_public_playlists_count"]
             playlists = sp_user_data["sp_user_public_playlists_uris"]
+
+            if ADD_PLAYLISTS_TO_MONITOR:
+                # Assuming your list is stored in a variable called playlists
+                playlists.extend(ADD_PLAYLISTS_TO_MONITOR)
+                playlists_count += len(playlists)
 
         recently_played_artists = sp_user_data["sp_user_recently_played_artists"]
 
