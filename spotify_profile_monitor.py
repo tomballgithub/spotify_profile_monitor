@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v2.5.3
+v2.6
 
 OSINT tool implementing real-time tracking of Spotify users activities and profile changes including playlists:
 https://github.com/misiektoja/spotify_profile_monitor/
@@ -18,7 +18,7 @@ python-dotenv (optional)
 spotipy (optional, needed when the token source is set to oauth_app)
 """
 
-VERSION = "2.5.3"
+VERSION = "2.6"
 
 # API 401 error means sp_dc cookie has expired. Lasts one year. 03/15/2025
 
@@ -158,12 +158,16 @@ DETECT_CHANGES_IN_PLAYLISTS = True
 # Can also be enabled via the -k flag
 GET_ALL_PLAYLISTS = False
 
-# Specify additional playlists to monitor as a list of dictionairies
+# Some users don't list all their public playlists on their profile, but if you know a playlist's URI, you can still monitor it
+#
+# Example:
+#
 # ADD_PLAYLISTS_TO_MONITOR = [
-    # {'uri': 'spotify:playlist:abc123', 'owner_name': 'user1', 'owner_uri': 'spotify:user:user1'},
-    # {'uri': 'spotify:playlist:def456', 'owner_name': 'user2', 'owner_uri': 'spotify:user:user2'}
+#     {'uri': 'spotify:playlist:{playlist_id1}', 'owner_name': '{user_id}', 'owner_uri': 'spotify:user:{user_id}'},
+#     {'uri': 'spotify:playlist:{playlist_id2}', 'owner_name': '{user_id}', 'owner_uri': 'spotify:user:{user_id}'}
 # ]
-ADD_PLAYLISTS_TO_MONITOR = ""
+# Replace {playlist_id1} and {playlist_id2} with the playlists URI IDs you want to monitor and {user_id} with the owner's URI ID
+ADD_PLAYLISTS_TO_MONITOR = []
 
 # Ignore Spotify-owned playlists when monitoring?
 # Set to True to avoid tracking Spotify-generated playlists that often change frequently (likes, tracks etc.)
@@ -252,6 +256,13 @@ HORIZONTAL_LINE = 113
 
 # Whether to clear the terminal screen after starting the tool
 CLEAR_SCREEN = True
+
+# Max characters per line when printing to screen to avoid line wrapping
+# Does not affect log file output
+# Set to 999 to auto-detect terminal width
+# Applies only when DISABLE_LOGGING is False
+# Can also be set via the --truncate flag
+TRUNCATE_CHARS = 0
 
 # Value used by signal handlers to increase or decrease profile check interval (SPOTIFY_CHECK_INTERVAL); in seconds
 SPOTIFY_CHECK_SIGNAL_VALUE = 300  # 5 minutes
@@ -506,7 +517,7 @@ IMGCAT_PATH = ""
 SP_SHA256 = ""
 DETECT_CHANGES_IN_PLAYLISTS = False
 GET_ALL_PLAYLISTS = False
-ADD_PLAYLISTS_TO_MONITOR = ""
+ADD_PLAYLISTS_TO_MONITOR = []
 IGNORE_SPOTIFY_PLAYLISTS = False
 PLAYLISTS_LIMIT = 0
 RECENTLY_PLAYED_ARTISTS_LIMIT = 0
@@ -531,6 +542,7 @@ CLEAR_SCREEN = False
 SPOTIFY_CHECK_SIGNAL_VALUE = 0
 TOKEN_MAX_RETRIES = 0
 TOKEN_RETRY_TIMEOUT = 0.0
+TRUNCATE_CHARS = 0
 
 exec(CONFIG_BLOCK, globals())
 
@@ -559,6 +571,12 @@ SP_CACHED_CLIENT_ID = ""
 
 # URL of the Spotify Web Player endpoint to get access token
 TOKEN_URL = "https://open.spotify.com/api/token"
+
+# URL of the endpoint to get server time needed to create TOTP object
+SERVER_TIME_URL = "https://open.spotify.com/"
+
+# Identifier used to select the appropriate encrypted secret from secret_cipher_dict when generating a TOTP token
+TOTP_VER = 10
 
 # Variables for caching functionality of the Spotify client token to avoid unnecessary refreshing
 SP_CACHED_CLIENT_TOKEN = None
@@ -663,6 +681,19 @@ SESSION.mount("https://", adapter)
 SESSION.mount("http://", adapter)
 
 
+# Truncates each line of a string to a specified number of characters including tab expansion and multi-line support
+def truncate_string_per_line(message, truncate_chars, tabsize=8):
+    lines = message.split('\n')
+    truncated_lines = []
+
+    for line in lines:
+        expanded_line = line.expandtabs(tabsize=tabsize)
+        truncated_line = expanded_line[:truncate_chars]
+        truncated_lines.append(truncated_line)
+
+    return '\n'.join(truncated_lines)
+
+
 # Logger class to output messages to stdout and log file
 class Logger(object):
     def __init__(self, filename):
@@ -670,8 +701,10 @@ class Logger(object):
         self.logfile = open(filename, "a", buffering=1, encoding="utf-8")
 
     def write(self, message):
-        self.terminal.write(message)
         self.logfile.write(message)
+        if (TRUNCATE_CHARS):
+            message = truncate_string_per_line(message, TRUNCATE_CHARS)
+        self.terminal.write(message)
         self.terminal.flush()
         self.logfile.flush()
 
@@ -1404,7 +1437,7 @@ def fetch_server_time(session: req.Session, ua: str) -> int:
         if platform.system() != 'Windows':
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(FUNCTION_TIMEOUT + 2)
-        response = session.head("https://open.spotify.com/", headers=headers, timeout=FUNCTION_TIMEOUT, verify=VERIFY_SSL)
+        response = session.head(SERVER_TIME_URL, headers=headers, timeout=FUNCTION_TIMEOUT, verify=VERIFY_SSL)
         response.raise_for_status()
     except TimeoutException as e:
         raise Exception(f"fetch_server_time() head network request timeout after {display_time(FUNCTION_TIMEOUT + 2)}: {e}")
@@ -1414,7 +1447,11 @@ def fetch_server_time(session: req.Session, ua: str) -> int:
         if platform.system() != 'Windows':
             signal.alarm(0)
 
-    return int(parsedate_to_datetime(response.headers["Date"]).timestamp())
+    date_hdr = response.headers.get("Date")
+    if not date_hdr:
+        raise Exception("fetch_server_time() missing 'Date' header")
+
+    return int(parsedate_to_datetime(date_hdr).timestamp())
 
 
 # Creates a TOTP object using a secret derived from transformed cipher bytes
@@ -1422,12 +1459,14 @@ def generate_totp():
     import pyotp
 
     secret_cipher_dict = {
+        "10": [61, 110, 58, 98, 35, 79, 117, 69, 102, 72, 92, 102, 69, 93, 41, 101, 42, 75],
+        "9": [109, 101, 90, 99, 66, 92, 116, 108, 85, 70, 86, 49, 68, 54, 87, 50, 72, 121, 52, 64, 57, 43, 36, 81, 97, 72, 53, 41, 78, 56],
         "8": [37, 84, 32, 76, 87, 90, 87, 47, 13, 75, 48, 54, 44, 28, 19, 21, 22],
         "7": [59, 91, 66, 74, 30, 66, 74, 38, 46, 50, 72, 61, 44, 71, 86, 39, 89],
         "6": [21, 24, 85, 46, 48, 35, 33, 8, 11, 63, 76, 12, 55, 77, 14, 7, 54],
-        "5": [12, 56, 76, 33, 88, 44, 88, 33, 78, 78, 11, 66, 22, 22, 55, 69, 54]
+        "5": [12, 56, 76, 33, 88, 44, 88, 33, 78, 78, 11, 66, 22, 22, 55, 69, 54],
     }
-    secret_cipher_bytes = secret_cipher_dict["8"]
+    secret_cipher_bytes = secret_cipher_dict[str(TOTP_VER)]
 
     transformed = [e ^ ((t % 33) + 9) for t, e in enumerate(secret_cipher_bytes)]
     joined = "".join(str(num) for num in transformed)
@@ -1442,7 +1481,6 @@ def refresh_access_token_from_sp_dc(sp_dc: str) -> dict:
     transport = True
     init = True
     session = req.Session()
-    session.cookies.set("sp_dc", sp_dc)
     data: dict = {}
     token = ""
 
@@ -1456,12 +1494,16 @@ def refresh_access_token_from_sp_dc(sp_dc: str) -> dict:
         "productType": "web-player",
         "totp": otp_value,
         "totpServer": otp_value,
-        "totpVer": 8,
-        "sTime": server_time,
-        "cTime": client_time,
-        "buildDate": time.strftime("%Y-%m-%d", time.gmtime(server_time)),
-        "buildVer": f"web-player_{time.strftime('%Y-%m-%d', time.gmtime(server_time))}_{server_time * 1000}_{secrets.token_hex(4)}",
+        "totpVer": TOTP_VER,
     }
+
+    if TOTP_VER < 10:
+        params.update({
+            "sTime": server_time,
+            "cTime": client_time,
+            "buildDate": time.strftime("%Y-%m-%d", time.gmtime(server_time)),
+            "buildVer": f"web-player_{time.strftime('%Y-%m-%d', time.gmtime(server_time))}_{server_time * 1000}_{secrets.token_hex(4)}",
+        })
 
     headers = {
         "User-Agent": USER_AGENT,
@@ -3858,7 +3900,6 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
         playlists = sp_user_data["sp_user_public_playlists_uris"]
 
         if ADD_PLAYLISTS_TO_MONITOR:
-            # Assuming your list is stored in a variable called playlists
             playlists.extend(ADD_PLAYLISTS_TO_MONITOR)
             playlists_count += len(ADD_PLAYLISTS_TO_MONITOR)
 
@@ -4255,7 +4296,6 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
             playlists = sp_user_data["sp_user_public_playlists_uris"]
 
             if ADD_PLAYLISTS_TO_MONITOR:
-                # Assuming your list is stored in a variable called playlists
                 playlists.extend(ADD_PLAYLISTS_TO_MONITOR)
                 playlists_count += len(ADD_PLAYLISTS_TO_MONITOR)
 
@@ -4784,7 +4824,7 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
 
 
 def main():
-    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, SP_DC_COOKIE, SP_APP_CLIENT_ID, SP_APP_CLIENT_SECRET, SP_USER_CLIENT_ID, SP_USER_CLIENT_SECRET, LOGIN_REQUEST_BODY_FILE, CLIENTTOKEN_REQUEST_BODY_FILE, REFRESH_TOKEN, LOGIN_URL, USER_AGENT, DEVICE_ID, SYSTEM_ID, USER_URI_ID, CSV_FILE, PLAYLISTS_TO_SKIP_FILE, FILE_SUFFIX, DISABLE_LOGGING, SP_LOGFILE, PROFILE_NOTIFICATION, SPOTIFY_CHECK_INTERVAL, SPOTIFY_ERROR_INTERVAL, FOLLOWERS_FOLLOWINGS_NOTIFICATION, ERROR_NOTIFICATION, DETECT_CHANGED_PROFILE_PIC, DETECT_CHANGES_IN_PLAYLISTS, GET_ALL_PLAYLISTS, imgcat_exe, SMTP_PASSWORD, SP_SHA256, stdout_bck, APP_VERSION, CPU_ARCH, OS_BUILD, PLATFORM, OS_MAJOR, OS_MINOR, CLIENT_MODEL, TOKEN_SOURCE, ALARM_TIMEOUT, pyotp, CLEAN_OUTPUT, USER_AGENT, SP_APP_TOKENS_FILE, SP_USER_TOKENS_FILE
+    global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, SP_DC_COOKIE, SP_APP_CLIENT_ID, SP_APP_CLIENT_SECRET, SP_USER_CLIENT_ID, SP_USER_CLIENT_SECRET, LOGIN_REQUEST_BODY_FILE, CLIENTTOKEN_REQUEST_BODY_FILE, REFRESH_TOKEN, LOGIN_URL, USER_AGENT, DEVICE_ID, SYSTEM_ID, USER_URI_ID, CSV_FILE, PLAYLISTS_TO_SKIP_FILE, FILE_SUFFIX, DISABLE_LOGGING, SP_LOGFILE, PROFILE_NOTIFICATION, SPOTIFY_CHECK_INTERVAL, SPOTIFY_ERROR_INTERVAL, FOLLOWERS_FOLLOWINGS_NOTIFICATION, ERROR_NOTIFICATION, DETECT_CHANGED_PROFILE_PIC, DETECT_CHANGES_IN_PLAYLISTS, GET_ALL_PLAYLISTS, imgcat_exe, SMTP_PASSWORD, SP_SHA256, stdout_bck, APP_VERSION, CPU_ARCH, OS_BUILD, PLATFORM, OS_MAJOR, OS_MINOR, CLIENT_MODEL, TOKEN_SOURCE, ALARM_TIMEOUT, pyotp, CLEAN_OUTPUT, USER_AGENT, SP_APP_TOKENS_FILE, SP_USER_TOKENS_FILE, TRUNCATE_CHARS
 
     if "--generate-config" in sys.argv:
         print(CONFIG_BLOCK.strip("\n"))
@@ -5048,6 +5088,13 @@ def main():
         action="store_true",
         default=None,
         help="Disable logging to spotify_profile_monitor_<user_uri_id/file_suffix>.log"
+    )
+    opts.add_argument(
+        "--truncate",
+        dest="truncate",
+        metavar="N",
+        type=int,
+        help="Max characters per screen line (not log), use 999 to auto-detect terminal width, ignored if -d is set"
     )
 
     args = parser.parse_args()
@@ -5561,6 +5608,18 @@ def main():
         if not FILE_SUFFIX:
             FILE_SUFFIX = str(args.user_id)
 
+    if args.truncate:
+        if args.truncate != 999:
+            TRUNCATE_CHARS = args.truncate
+        else:
+            try:
+                terminal_size = shutil.get_terminal_size()
+                print(f"The detected terminal screen width is: {terminal_size.columns} characters\n")
+                TRUNCATE_CHARS = terminal_size.columns
+            except Exception as e:
+                print(f"Error: Cannot determine terminal screen width: {e}")
+                sys.exit(1)
+
     if args.disable_logging is True:
         DISABLE_LOGGING = True
 
@@ -5596,7 +5655,7 @@ def main():
         ERROR_NOTIFICATION = False
 
     print(f"* Spotify polling intervals:\t[check: {display_time(SPOTIFY_CHECK_INTERVAL)}] [error: {display_time(SPOTIFY_ERROR_INTERVAL)}]")
-    print(f"* Email notifications:\t\t[profile changes = {PROFILE_NOTIFICATION}] [followers/followings = {FOLLOWERS_FOLLOWINGS_NOTIFICATION}]\n\t\t\t\t[errors = {ERROR_NOTIFICATION}]")
+    print(f"* Email notifications:\t\t[profile changes = {PROFILE_NOTIFICATION}] [followers/followings = {FOLLOWERS_FOLLOWINGS_NOTIFICATION}]\n*\t\t\t\t[errors = {ERROR_NOTIFICATION}]")
     print(f"* Token source:\t\t\t{TOKEN_SOURCE}")
     print(f"* Profile pic changes:\t\t{DETECT_CHANGED_PROFILE_PIC}")
     print(f"* Playlist changes:\t\t{DETECT_CHANGES_IN_PLAYLISTS}")
@@ -5608,6 +5667,8 @@ def main():
     print(f"* Ignore listed playlists:\t{bool(PLAYLISTS_TO_SKIP_FILE)}" + (f" ({PLAYLISTS_TO_SKIP_FILE})" if PLAYLISTS_TO_SKIP_FILE else ""))
     print(f"* Display profile pics:\t\t{bool(imgcat_exe)}" + (f" (via {imgcat_exe})" if imgcat_exe else ""))
     print(f"* Output logging enabled:\t{not DISABLE_LOGGING}" + (f" ({FINAL_LOG_PATH})" if not DISABLE_LOGGING else ""))
+    if not DISABLE_LOGGING and TRUNCATE_CHARS > 0:
+        print(f"* Truncate terminal lines:\t{TRUNCATE_CHARS} chars")
     if TOKEN_SOURCE in ('oauth_user', 'oauth_app'):
         print(f"* Spotify token cache file:\t{({'oauth_app': SP_APP_TOKENS_FILE, 'oauth_user': SP_USER_TOKENS_FILE}.get(TOKEN_SOURCE) or 'None (memory only)')}")
     print(f"* Configuration file:\t\t{cfg_path}")
