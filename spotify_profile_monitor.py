@@ -37,6 +37,7 @@ VERSION = "2.6"
 # 2025/06/14: Added feature to manually add additional playlists to monitor (not all public playlists show up automatically)
 
 # bugs and to-dos:
+#*** PR load extra playlists
 
 # command line examples
 # *** see .conf file
