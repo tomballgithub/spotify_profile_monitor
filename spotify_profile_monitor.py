@@ -36,6 +36,8 @@ VERSION = "2.6.1"
 # 2025/04/02: Spotify_list_saved_tracks and spotify_list_tracks_for_playlist will not overwrite file if there's an error fetching spotify data
 # 2025/06/12: Updated to latest source from github
 # 2025/06/14: Added feature to manually add additional playlists to monitor (not all public playlists show up automatically)
+# 2025/07/07: Added truncation feature to this script
+# 2025/07/07: Upgraded to latest source
 
 # bugs and to-dos:
 #*** PR load extra playlists
