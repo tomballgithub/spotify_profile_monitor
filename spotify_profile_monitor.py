@@ -23,8 +23,8 @@ VERSION = "2.7"
 
 # API 401 error means sp_dc cookie has expired. Lasts one year. 03/15/2025
 
-# spotify-friend-stalker: https://github.com/moritzlauper/spotify-friend-stalker
-# spotify-buddylist API:  https://github.com/valeriangalliat/spotify-buddylist
+# spotify-friend-stalker: https://github.com/moritzlauper/spotify-friend-stalker (node.js)
+# spotify-buddylist API:  https://github.com/valeriangalliat/spotify-buddylist (node.js)
 # spotify-api:            https://developer.spotify.com/documentation/web-api (official API)
 # spotify-monitor:        https://github.com/misiektoja/spotify_monitor/
 # spotify-api-python:     https://github.com/thlucas1/SpotifyWebApiPython (reference only)
