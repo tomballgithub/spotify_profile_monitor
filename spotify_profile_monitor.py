@@ -39,6 +39,7 @@ VERSION = "3.4"
 # 2025/06/14: Added feature to manually add additional playlists to monitor (not all public playlists show up automatically)
 # 2025/07/07: Added truncation feature to this script
 # 2025/07/07: Upgraded to latest source
+# 2025/10/17: Discovery Zone changes will send an NTFY alerts
 
 # bugs and to-dos:
 #*** PR load extra playlists
@@ -753,6 +754,7 @@ from pathlib import Path
 import secrets
 from typing import Optional
 from email.utils import parsedate_to_datetime
+import ntfy
 
 import urllib3
 if not VERIFY_SSL:
@@ -3841,7 +3843,11 @@ def spotify_process_public_playlists(sp_accessToken, playlists, get_tracks, play
         # Track current playlist name to keep it visible
         current_playlist_name = ""
 
+        failure_count = 0 #jmk
         for idx, playlist in enumerate(playlists, 1):
+            # print(f"{idx}, {failure_count}")
+            # if idx > 1:
+                # continue
             user_id_name_mapping = {}
             unknown_added_by_tracks = 0
             p_uri = ""
@@ -3956,12 +3962,17 @@ def spotify_process_public_playlists(sp_accessToken, playlists, get_tracks, play
                             })
                             PLAYLIST_INFO_CACHE[p_uri] = existing
 
-                            print(f"\n* Error while processing playlist {spotify_format_playlist_reference(p_uri)}, skipping for now" + (f": {e}" if e else ""))
-                            print_cur_ts("Timestamp:\t\t\t")
-                            error_while_processing = True
-                            if show_progress:
-                                _display_progress(idx, total_playlists, current_playlist_name, is_final=(idx == total_playlists))
-                            continue
+                            failure_count += 1
+                            if failure_count == 1:
+                                print(f"\n* Error while processing playlist {spotify_format_playlist_reference(p_uri)}, skipping for now" + (f": {e}" if e else ""))
+    #                            print_cur_ts("Timestamp:\t\t\t")
+    #                            error_while_processing = True
+                                if show_progress:
+                                    _display_progress(idx, total_playlists, current_playlist_name, is_final=(idx == total_playlists))
+                                continue
+                            else:
+                                print(f"- (Masking error for {spotify_format_playlist_reference(p_uri)}")
+                                continue
 
                     p_name = sp_playlist_data.get("sp_playlist_name", "")
                     current_playlist_name = p_name  # Update tracked name
@@ -4086,6 +4097,8 @@ def spotify_process_public_playlists(sp_accessToken, playlists, get_tracks, play
                         if stdout_bck is not None and isinstance(sys.stdout, Logger):
                             sys.stdout.logfile.write("\n")
                             sys.stdout.logfile.flush()
+        if failure_count:
+            print_cur_ts("Timestamp:\t\t\t")
 
     return list_of_playlists, error_while_processing
 
@@ -6046,6 +6059,8 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                                     if PROFILE_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, m_body_html, SMTP_SSL)
+                                    if p_name.upper() == "DISCOVERY ZONE":
+                                        ntfy.send_ntfy(ntfy.NTFY_ALERTS, f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, "5")
                                     print(f"Check interval:\t\t\t{display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
@@ -6064,6 +6079,8 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                                     if PROFILE_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, m_body_html, SMTP_SSL)
+                                    if (p_name.upper() == "DISCOVERY ZONE") or (p_name_old.upper() == "DISCOVERY ZONE"):
+                                        ntfy.send_ntfy(ntfy.NTFY_ALERTS, f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, "5")
                                     print(f"Check interval:\t\t\t{display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
@@ -6082,6 +6099,8 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                                     if PROFILE_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, m_body_html, SMTP_SSL)
+                                    if p_name.upper() == "DISCOVERY ZONE":
+                                        send_ntfy(f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, "5")
                                     print(f"Check interval:\t\t\t{display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
