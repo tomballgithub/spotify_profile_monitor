@@ -1,6 +1,97 @@
 # spotify_profile_monitor release notes
 
-This is a high-level summary of the most important changes. 
+This is a high-level summary of the most important changes.
+
+# Changes in 3.4 (23 Feb 2026)
+
+**Features and Improvements**:
+
+- **NEW:** Added `--export-all-playlists` flag to export all user's playlists to individual CSV files (named after the playlist) when using `-i` / `--show-user-profile` mode (requires `pathvalidate` library) (thanks [@tomballgithub](https://github.com/tomballgithub))
+- **IMPROVE:** Added graceful handling for playlists visible in user's profile, but returning `404` while getting its details (marked as `[ RESTRICTED ]`, applies mainly for Spotify-curated playlists, closes [#36](https://github.com/misiektoja/spotify_profile_monitor/issues/36))
+- **NEW:** Added **debug mode** with `DEBUG_MODE` config option and `--debug` CLI flag for technical troubleshooting output
+
+**Bug fixes**:
+
+- **BUGFIX:** Capped server-provided `Retry-After` for HTTP 429 responses to avoid long hangs
+- **BUGFIX:** Fixed fetching of TOTP secrets so it happens before retries
+
+# Changes in 3.3 (07 Feb 2026)
+
+**Features and Improvements**:
+
+- **IMPROVE:** Implemented API endpoints adaptability to handle **Spotify API changes** scheduled for **February 11, 2026** (token validation, user removal scraping, graceful follower count degradation, playlist handling to support new `items` field naming)
+
+**Breaking changes**:
+
+- **BREAKING:** Starting **February 11, 2026**, `oauth_app` alone will no longer work for monitoring users (Spotify is removing `GET /users/{id}` endpoint) - use `cookie` or `client` method instead
+- **BREAKING:** Starting **February 11, 2026**, `oauth_user` will no longer work for monitoring **other users** (Spotify is removing the `GET /users/{id}` endpoint). **Self-monitoring** your own account via `oauth_user` remains fully functional. For monitoring others, use the `cookie` or `client` method instead.
+- **BREAKING:** Starting **March 9, 2026**, `oauth_user` mode will require the authorized user to have a **Spotify Premium** account
+
+# Changes in 3.2 (06 Feb 2026)
+
+**Features and Improvements**:
+
+- **NEW:** Implemented playlist change retry mechanism to address occasional Spotify API glitches returning incomplete/empty playlists list; see `PLAYLISTS_CHANGE_COUNTER` config option (closes [#31](https://github.com/misiektoja/spotify_profile_monitor/issues/31))
+- **IMPROVE:** Enhanced `--generate-config` to support writing directly to a file (e.g. `spotify_profile_monitor --generate-config spotify_profile_monitor.conf`). This avoids UTF-16 encoding issues on **Windows PowerShell**
+- **IMPROVE:** Expanded tabs to spaces in output log files to ensure **consistent alignment across different viewers**
+- **IMPROVE:** Enhanced error handling for empty or malformed secret files
+
+**Bug fixes**:
+
+- **BUGFIX:** Updated old collaborator state when reverting to baseline to ensure notification suppression (fixes [#32](https://github.com/misiektoja/spotify_profile_monitor/issues/32))
+- **BUGFIX:** Suppressed collaborator notification for transient glitches when reverting to stable baseline (fixes [#30](https://github.com/misiektoja/spotify_profile_monitor/issues/30))
+
+# Changes in 3.1 (27 Dec 2025)
+
+**Features and Improvements**:
+
+- **NEW:** Implemented **hybrid authentication approach** when using `cookie`/`client` methods by using secondary client credentials OAuth flow (**oauth_app**) for playlist/user API calls to address restrictions introduced by Spotify on 22 Dec 2025
+
+**Bug fixes**:
+
+- **BUGFIX:** Removed old **TOTP versions** from `SECRET_CIPHER_DICT`
+- **BUGFIX:** Updated **TOTP version handling** in `refresh_access_token_from_sp_dc` function to dynamically use the latest version and remove old TOTP versions from SECRET_CIPHER_DICT
+
+**Breaking changes**:
+
+- **BREAKING:** Removed **token owner display** at startup due to `/v1/me` endpoint limitations introduced by Spotify on **22 Dec 2025**
+- **BREAKING:** **OAuth app credentials** are now required for playlist/user information retrieval when using either `cookie` or `client` **token source methods**
+
+# Changes in 3.0 (13 Dec 2025)
+
+**Features and Improvements**:
+
+- **NEW:** Implemented HTML formatting for email notifications for better readability
+- **IMPROVE:** Enhanced notifications for added/removed playlists with detailed information including songs count, duration, creation date and last update date in both console output and email notifications
+- **IMPROVE:** Added progress bar for playlist processing to provide better visual feedback
+
+**Bug fixes**:
+
+- **BUGFIX:** Improved handling of transient API issues in collaborator change notifications ([#17](https://github.com/misiektoja/spotify_profile_monitor/issues/17))
+
+# Changes in 2.9 (11 Nov 2025)
+
+**Features and Improvements**:
+
+- **NEW:** Added support for **Amazon Music**, **Deezer** and **Tidal** URLs in console and email outputs
+- **NEW:** Added support for **AZLyrics**, **Tekstowo.pl**, **Musixmatch** and **Lyrics.com** lyrics services
+- **NEW:** Added configuration options to enable/disable music service URLs in console and email outputs (see `ENABLE_APPLE_MUSIC_URL`, `ENABLE_YOUTUBE_MUSIC_URL`, `ENABLE_AMAZON_MUSIC_URL`, `ENABLE_DEEZER_URL` and `ENABLE_TIDAL_URL` config options)
+- **NEW:** Added configuration options to enable/disable lyrics service URLs in console and email outputs (see `ENABLE_GENIUS_LYRICS_URL`, `ENABLE_AZLYRICS_URL`, `ENABLE_TEKSTOWO_URL`, `ENABLE_MUSIXMATCH_URL` and `ENABLE_LYRICS_COM_URL` config options)
+
+# Changes in 2.8 (12 Oct 2025)
+
+**Features and Improvements**:
+
+- **IMPROVE:** Added support for loading TOTP secrets from local files via file:// URLs
+- **IMPROVE:** Updated remote URL in SECRET_CIPHER_DICT_URL
+- **IMPROVE:** Updated  [spotify_monitor_secret_grabber](https://github.com/misiektoja/spotify_monitor/blob/dev/debug/spotify_monitor_secret_grabber.py) to dump secrets in different formats. Choose what you need with the `--secret`,` --secretbytes` and `--secretdict` CLI flags, or go all out with the `--all` mode to write all secret formats to files like `secrets.json`, `secretBytes.json` and `secretDict.json` (thanks [@tomballgithub](https://github.com/tomballgithub))
+- **IMPROVE:** Added multi-arch Docker image build and compose support for  [spotify_monitor_secret_grabber](https://github.com/misiektoja/spotify_monitor/blob/dev/debug/spotify_monitor_secret_grabber.py) - more info at [🐳 Secret Key Extraction via Docker](https://github.com/misiektoja/spotify_monitor#-secret-key-extraction-via-docker-recommended-easiest-way)
+- **IMPROVE:** Moved CLEAN_OUTPUT assignment after loading configuration files. Checks that it is used only with -l or -x
+- **IMPROVE:** Added info to console output when TOTP secrets are fetched from a remote URL or local file
+
+**Bug fixes**:
+
+- **BUGFIX:** Fixed -l errors if playlist provided is just the ID (thanks [@tomballgithub](https://github.com/tomballgithub), fixes [#25](https://github.com/misiektoja/spotify_profile_monitor/issues/25))
 
 # Changes in 2.7 (14 Jul 2025)
 
@@ -40,7 +131,7 @@ This is a high-level summary of the most important changes.
 
 **Bug fixes**:
 
-- **BUGFIX:** Fixed web-player access token retrieval via sp_dc cookie by updating secret cipher bytes (thanks [@WurdahMekanik](https://github.com/WurdahMekanik))
+- **BUGFIX:** Fixed web-player access token retrieval via sp_dc cookie by updating secret cipher bytes (thanks [@WurdahMekanik](https://github.com/WurdahMekanik) and [@matthewcamilizer](https://github.com/matthewcamilizer))
 - **BUGFIX:** Fixed missing email alerts for failed token requests when using sp_dc cookie method
 
 # Changes in 2.5.2 (18 Jun 2025)
@@ -222,7 +313,7 @@ Keep in mind: the tool displays the actual number of collaborators. That means i
 **Features and Improvements**:
 
 - **NEW:** Possibility to disable detection of changes in user's public playlists (new **-q** / **--do_not_monitor_playlists** parameter)
-- **NEW:** Possibility to disable email notifications for changed followers/followings (new **-g** / **--disable_followers_followings_notification** parameter) 
+- **NEW:** Possibility to disable email notifications for changed followers/followings (new **-g** / **--disable_followers_followings_notification** parameter)
 - **IMPROVE:** Recently played artists limit increased from 15 to 50 + info about the limit in the output
 - **IMPROVE:** Indentation + linting fixes
 
