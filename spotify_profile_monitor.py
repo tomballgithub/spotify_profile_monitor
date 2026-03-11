@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v3.4
+v3.4.1
 
 OSINT tool implementing real-time tracking of Spotify users activities and profile changes including playlists:
 https://github.com/misiektoja/spotify_profile_monitor/
@@ -20,7 +20,7 @@ wcwidth (optional, needed by TRUNCATE_CHARS feature)
 pathvalidate (optional, needed by --export-all-playlists)
 """
 
-VERSION = "3.4"
+VERSION = "3.4.1"
 
 # API 401 error means sp_dc cookie has expired. Lasts one year. 03/15/2025
 
@@ -361,13 +361,13 @@ TOKEN_RETRY_TIMEOUT = 0.5  # 0.5 second
 # Newest secrets are downloaded automatically from SECRET_CIPHER_DICT_URL (see below)
 # Can also be fetched via spotify_monitor_secret_grabber.py utility - see debug dir
 SECRET_CIPHER_DICT = {
-#    "61": [44, 55, 47, 42, 70, 40, 34, 114, 76, 74, 50, 111, 120, 97, 75, 76, 94, 102, 43, 69, 49, 120, 118, 80, 64, 78],
+    "61": [44, 55, 47, 42, 70, 40, 34, 114, 76, 74, 50, 111, 120, 97, 75, 76, 94, 102, 43, 69, 49, 120, 118, 80, 64, 78],
 }
 
 # Remote or local URL used to fetch updated secrets needed for TOTP generation
 # Set to empty string to disable
 # If you used "spotify_monitor_secret_grabber.py --secretdict > secretDict.json" specify the file location below
-SECRET_CIPHER_DICT_URL = "https://github.com/xyloflake/spot-secrets-go/blob/main/secrets/secretDict.json?raw=true"
+SECRET_CIPHER_DICT_URL = "https://raw.githubusercontent.com/xyloflake/spot-secrets-go/main/secrets/secretDict.json"
 # SECRET_CIPHER_DICT_URL = file:///C:/your_path/secretDict.json
 # SECRET_CIPHER_DICT_URL = "file:///your_path/secretDict.json"
 
@@ -2825,7 +2825,7 @@ def is_playlist_private(access_token, playlist_uri, oauth_app: bool = False):
 
 # Checks if a Spotify user URI ID has been deleted
 def is_user_removed(access_token, user_uri_id, oauth_app: bool = False):
-    # For oauth_app / oauth_user: use web scraping fallback (official API removed in Feb 2026)
+    # For oauth_app / oauth_user: use web scraping fallback (Client Credentials token cannot access user profile endpoints)
     # open.spotify.com/user/{id} returns 404 for removed users, no auth needed
     if TOKEN_SOURCE in {"oauth_app", "oauth_user"} or oauth_app:
         url = f"https://open.spotify.com/user/{user_uri_id}"
@@ -2998,7 +2998,7 @@ def spotify_get_playlist_info(access_token, playlist_uri, get_tracks, oauth_app:
 
         sp_playlist_tracks = sp_playlist_tracks_concatenated_list
 
-        # Support both old ('tracks') and new ('items') field names (Spotify Feb 2026 API change)
+        # Support both old ('tracks') and new ('items') field names (Spotify Mar 2026 API change)
         tracks_metadata = json_response1.get("items") or json_response1.get("tracks")
         if not isinstance(tracks_metadata, dict):
             raise ValueError("Playlist's tracks metadata is missing or malformed")
@@ -3051,15 +3051,17 @@ def spotify_get_playlist_info(access_token, playlist_uri, get_tracks, oauth_app:
                 sp_playlist_tracks_count = sp_playlist_tracks_count_tmp
 
         followers_data = json_response1.get("followers")
-        if not isinstance(followers_data, dict):
-            raise ValueError("Playlist's followers data is missing or malformed")
+        total_followers_from_api = followers_data.get("total") if isinstance(followers_data, dict) else None
 
-        total_followers_from_api = followers_data.get("total")
+        sp_playlist_followers_count = None
+        if total_followers_from_api is not None:
+            try:
+                sp_playlist_followers_count = int(total_followers_from_api)
+            except (TypeError, ValueError):
+                sp_playlist_followers_count = None
 
-        if total_followers_from_api is None:
-            raise ValueError("Playlist's total number of saves / followers is missing or malformed")
-
-        sp_playlist_followers_count = int(total_followers_from_api)
+        if sp_playlist_followers_count is None:
+            debug_print(f"spotify_get_playlist_info(): followers count unavailable for uri={playlist_uri}, using n/a")
 
         sp_playlist_url = (json_response1.get("external_urls") or {}).get("spotify")
         if sp_playlist_url:
@@ -3171,7 +3173,7 @@ def spotify_get_user_info(access_token, user_uri_id, get_playlists, recently_pla
         is_self = TOKEN_SOURCE == "oauth_user" and is_token_owner(access_token, user_uri_id)
 
         if is_self:
-            # oauth_user monitoring self: use /me endpoints (still available post-Feb 2026)
+            # oauth_user monitoring self: use /me endpoints (still available for authenticated users)
             url_me = "https://api.spotify.com/v1/me"
             url_me_playlists = f"https://api.spotify.com/v1/me/playlists?limit={PLAYLISTS_LIMIT if get_playlists else 0}"
 
@@ -3182,7 +3184,7 @@ def spotify_get_user_info(access_token, user_uri_id, get_playlists, recently_pla
 
             out.update({
                 "sp_username": json_response.get("display_name", ""),
-                # followers field removed in Feb 2026, handle gracefully
+                # followers field removed in Mar 2026, handle gracefully
                 "sp_user_followers_count": _safe_int(followers_total, "followers"),
                 "sp_user_followers_count_available": followers_total is not None,
                 "sp_user_image_url": (json_response.get("images") or [{}])[0].get("url", "")
@@ -3199,7 +3201,7 @@ def spotify_get_user_info(access_token, user_uri_id, get_playlists, recently_pla
 
         else:
             # oauth_app or oauth_user monitoring others: try existing endpoints
-            # These endpoints (GET /users/{id}, GET /users/{id}/playlists) will be removed in Feb 2026
+            # Note: GET /users/{id} and GET /users/{id}/playlists are not accessible with Client Credentials (oauth_app) token
             try:
                 json_response = _rq(url2)
 
@@ -3224,12 +3226,12 @@ def spotify_get_user_info(access_token, user_uri_id, get_playlists, recently_pla
 
             except req.HTTPError as e:
                 if e.response is not None and e.response.status_code in {403, 404}:
-                    # Spotify Feb 2026 API removal: GET /users/{id} and GET /users/{id}/playlists removed
+                    # oauth_app (Client Credentials) does not have permission to access user profile endpoints
                     print(f"\n* Warning: Cannot fetch profile for user '{user_uri_id}' with {TOKEN_SOURCE} token source")
-                    print("* Spotify removed GET /users/{{id}} and GET /users/{{id}}/playlists endpoints in February 2026")
+                    print("* GET /users/{{id}} and GET /users/{{id}}/playlists are not accessible with Client Credentials (oauth_app) token")
                     print("* To monitor other users, use 'cookie' or 'client' token source (with oauth_app hybrid)")
                     print("* If you're using oauth_user to monitor your own account, ensure the user URI ID matches your account\n")
-                    raise ValueError(f"Cannot monitor user '{user_uri_id}' with '{TOKEN_SOURCE}' token source post-Feb 2026. Use 'cookie' or 'client' token source for monitoring other users.")
+                    raise ValueError(f"Cannot monitor user '{user_uri_id}' with '{TOKEN_SOURCE}' token source. Use 'cookie' or 'client' token source for monitoring other users.")
                 raise
 
         # Recently played artists (only for oauth_user monitoring self)
@@ -3389,7 +3391,7 @@ def spotify_list_tracks_for_playlist(sp_accessToken, playlist_url, csv_file_name
     if not CLEAN_OUTPUT and not EXPORT_ALL:
         print(f"Playlist '{p_name}' owned by '{p_owner}':\n")
 
-    p_likes = sp_playlist_data.get("sp_playlist_followers_count", 0)
+    p_likes = sp_playlist_data.get("sp_playlist_followers_count")
     p_tracks = sp_playlist_data.get("sp_playlist_tracks_count", 0)
     p_tracks_before_filtering = sp_playlist_data.get("sp_playlist_tracks_count_before_filtering", 0)
     p_tracks_list = sp_playlist_data.get("sp_playlist_tracks", None)
@@ -3476,7 +3478,8 @@ def spotify_list_tracks_for_playlist(sp_accessToken, playlist_url, csv_file_name
 
         songs_display = f"{p_tracks} ({p_tracks_before_filtering - p_tracks} filtered out)" if p_tracks_before_filtering > p_tracks else f"{p_tracks}"
 
-        print(f"URL:\t\t\t{playlist_url}\nSongs:\t\t\t{songs_display}\nLikes:\t\t\t{p_likes}")
+        likes_display = p_likes if p_likes is not None else "n/a"
+        print(f"URL:\t\t\t{playlist_url}\nSongs:\t\t\t{songs_display}\nLikes:\t\t\t{likes_display}")
 
         if added_at_ts_lowest > 0:
             p_creation_date = get_date_from_ts(int(added_at_ts_lowest))
@@ -5367,6 +5370,15 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                     send_email(m_subject, m_body, m_body_html, SMTP_SSL)
                     email_sent = True
 
+            elif 'cannot monitor user' in err:
+                if ERROR_NOTIFICATION and not email_sent:
+                    m_subject = f"spotify_profile_monitor: token source '{TOKEN_SOURCE}' not supported for monitoring this user! (uri: {user_uri_id})"
+                    m_body = f"Token source '{TOKEN_SOURCE}' is not supported for monitoring user '{user_uri_id}'!\n{e}{get_cur_ts(nl_ch + nl_ch + 'Timestamp: ')}"
+                    m_body_html = f"<html><head></head><body>Token source '{TOKEN_SOURCE}' is not supported for monitoring user '{user_uri_id}'!<br>{escape(str(e))}{get_cur_ts('<br><br>Timestamp: ')}</body></html>"
+                    print(f"Sending email notification to {RECEIVER_EMAIL}")
+                    send_email(m_subject, m_body, m_body_html, SMTP_SSL)
+                    email_sent = True
+
             elif 'not found' in err or '404' in err:
                 if is_user_removed(sp_accessToken, user_uri_id):
                     print(f"* Error: User '{user_uri_id}' might have removed the account!")
@@ -5670,16 +5682,30 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                                 p_restricted_old = bool(playlist_old.get("restricted", False))
                                 restricted_pair = p_restricted or p_restricted_old
 
-                                # Number of likes changed
-                                if p_likes is not None and p_likes_old is not None and p_likes != p_likes_old:
+                                likes_display_old = p_likes_old if p_likes_old is not None else "n/a"
+                                likes_display_new = p_likes if p_likes is not None else "n/a"
+
+                                # Number of likes changed or became available / unavailable
+                                likes_value_changed = p_likes is not None and p_likes_old is not None and p_likes != p_likes_old
+                                likes_became_available = p_likes is not None and p_likes_old is None
+                                likes_became_unavailable = p_likes is None and p_likes_old is not None
+
+                                if likes_value_changed or likes_became_available or likes_became_unavailable:
                                     try:
-                                        p_likes_diff = p_likes - p_likes_old
                                         p_likes_diff_str = ""
-                                        if p_likes_diff > 0:
-                                            p_likes_diff_str = "+" + str(p_likes_diff)
+                                        if likes_value_changed:
+                                            p_likes_diff = p_likes - p_likes_old
+                                            if p_likes_diff > 0:
+                                                p_likes_diff_str = "+" + str(p_likes_diff)
+                                            else:
+                                                p_likes_diff_str = str(p_likes_diff)
+                                            p_message = f"* Playlist '{p_name}': number of likes changed from {p_likes_old} to {p_likes} ({p_likes_diff_str})\n* Playlist URL: {p_url}\n"
+                                        elif likes_became_available:
+                                            p_likes_diff_str = "n/a -> " + str(p_likes)
+                                            p_message = f"* Playlist '{p_name}': number of likes became available ({likes_display_old} -> {likes_display_new})\n* Playlist URL: {p_url}\n"
                                         else:
-                                            p_likes_diff_str = str(p_likes_diff)
-                                        p_message = f"* Playlist '{p_name}': number of likes changed from {p_likes_old} to {p_likes} ({p_likes_diff_str})\n* Playlist URL: {p_url}\n"
+                                            p_likes_diff_str = str(p_likes_old) + " -> n/a"
+                                            p_message = f"* Playlist '{p_name}': number of likes became unavailable ({likes_display_old} -> {likes_display_new})\n* Playlist URL: {p_url}\n"
                                         print(p_message)
                                     except Exception as e:
                                         print(f"* Error while processing likes for playlist {spotify_format_playlist_reference(p_uri)}, skipping for now" + (f": {e}" if e else ""))
@@ -5688,13 +5714,13 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
 
                                     try:
                                         if csv_file_name:
-                                            write_csv_entry(csv_file_name, now_local_naive(), "Playlist Likes", p_name, p_likes_old, p_likes)
+                                            write_csv_entry(csv_file_name, now_local_naive(), "Playlist Likes", p_name, likes_display_old, likes_display_new)
                                     except Exception as e:
                                         print(f"* Error: {e}")
 
-                                    m_subject = f"Spotify user {username} number of likes for playlist '{p_name}' has changed! ({p_likes_diff_str}, {p_likes_old} -> {p_likes})"
+                                    m_subject = f"Spotify user {username} number of likes for playlist '{p_name}' has changed! ({p_likes_diff_str}, {likes_display_old} -> {likes_display_new})"
                                     m_body = f"{p_message}\nCheck interval: {display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
-                                    m_body_html = f"<html><head></head><body>Playlist '<b><a href=\"{p_url}\">{escape(p_name)}</a></b>': number of likes changed from <b>{p_likes_old}</b> to <b>{p_likes}</b> (<b>{escape(p_likes_diff_str)}</b>)<br><br>Check interval: <b>{escape(display_time(SPOTIFY_CHECK_INTERVAL))}</b> ({escape(get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}</body></html>"
+                                    m_body_html = f"<html><head></head><body>Playlist '<b><a href=\"{p_url}\">{escape(p_name)}</a></b>': number of likes changed from <b>{escape(str(likes_display_old))}</b> to <b>{escape(str(likes_display_new))}</b> (<b>{escape(p_likes_diff_str)}</b>)<br><br>Check interval: <b>{escape(display_time(SPOTIFY_CHECK_INTERVAL))}</b> ({escape(get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}</body></html>"
                                     if PROFILE_NOTIFICATION:
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, m_body_html, SMTP_SSL)
