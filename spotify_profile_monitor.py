@@ -40,6 +40,7 @@ VERSION = "3.4.1"
 # 2025/07/07: Added truncation feature to this script
 # 2025/07/07: Upgraded to latest source
 # 2025/10/17: Discovery Zone changes will send an NTFY alerts
+# 2025/04/11: Mask repeat playlist networking errors
 
 # bugs and to-dos:
 #*** PR load extra playlists
@@ -3846,7 +3847,7 @@ def spotify_process_public_playlists(sp_accessToken, playlists, get_tracks, play
         # Track current playlist name to keep it visible
         current_playlist_name = ""
 
-        failure_count = 0 #jmk
+        failure_count = 0
         for idx, playlist in enumerate(playlists, 1):
             # print(f"{idx}, {failure_count}")
             # if idx > 1:
@@ -3968,14 +3969,15 @@ def spotify_process_public_playlists(sp_accessToken, playlists, get_tracks, play
                             failure_count += 1
                             if failure_count == 1:
                                 print(f"\n* Error while processing playlist {spotify_format_playlist_reference(p_uri)}, skipping for now" + (f": {e}" if e else ""))
-    #                            print_cur_ts("Timestamp:\t\t\t")
-    #                            error_while_processing = True
+                                # print_cur_ts("Timestamp:\t\t\t")
+                                error_while_processing = True
                                 if show_progress:
                                     _display_progress(idx, total_playlists, current_playlist_name, is_final=(idx == total_playlists))
-                                continue
-                            else:
-                                print(f"- (Masking error for {spotify_format_playlist_reference(p_uri)}")
-                                continue
+                            elif failure_count == 2:
+                                print(f"- (Masking additional errors)")
+                            # else:
+                                # print(f"- (Masking error for {spotify_format_playlist_reference(p_uri)}")
+                            continue
 
                     p_name = sp_playlist_data.get("sp_playlist_name", "")
                     current_playlist_name = p_name  # Update tracked name
@@ -4058,11 +4060,17 @@ def spotify_process_public_playlists(sp_accessToken, playlists, get_tracks, play
 
                 except Exception as e:
                     debug_print(f"playlist loop: unexpected build error for uri={p_uri}: {e}")
-                    print(f"\n* Unexpected error while building playlist data for: {spotify_format_playlist_reference(p_uri)}: {e}")
-                    print_cur_ts("Timestamp:\t\t\t")
-                    error_while_processing = True
-                    if show_progress:
-                        _display_progress(idx, total_playlists, current_playlist_name, is_final=(idx == total_playlists))
+                    failure_count += 1
+                    if failure_count == 1:
+                        print(f"\n* Unexpected error while building playlist data for: {spotify_format_playlist_reference(p_uri)}: {e}")
+                        # print_cur_ts("Timestamp:\t\t\t")
+                        error_while_processing = True
+                        if show_progress:
+                            _display_progress(idx, total_playlists, current_playlist_name, is_final=(idx == total_playlists))
+                    elif failure_count == 2:
+                        print(f"- (Masking additional errors)")
+                    # else:
+                        # print(f"- (Masking error for {spotify_format_playlist_reference(p_uri)}")
                     continue
 
                 p_creation_date = datetime.fromtimestamp(int(added_at_ts_lowest), pytz.timezone(LOCAL_TIMEZONE)) if added_at_ts_lowest > 0 else None
