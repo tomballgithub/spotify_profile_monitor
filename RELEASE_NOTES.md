@@ -2,6 +2,22 @@
 
 This is a high-level summary of the most important changes.
 
+# Changes in 3.5 (21 Jul 2026)
+
+Version **3.5** keeps public playlist monitoring working under Spotify's current API restrictions. It adds automatic fallback to Spotify web-player data, removes the extra OAuth app requirement for cookie and client users and improves playlist polling accuracy and efficiency.
+
+**Features and Improvements**:
+
+- **NEW:** Added an **automatic public web-player playlist backend** for Spotify's restricted Development Mode apps. It restores public playlist details, track history and collaborator monitoring without relying on blocked legacy Web API endpoints. Large playlists are loaded across all pages and the tool automatically refreshes temporary tokens, adapts to Spotify query changes and retries brief Spotify service failures
+- **IMPROVE:** Made **Spotify OAuth app credentials optional** alongside cookie and client modes. Existing complete `SP_APP_CLIENT_ID` and `SP_APP_CLIENT_SECRET` configurations remain supported and are tried first, then public playlist requests switch automatically to the web-player backend if the legacy API is restricted. Startup output now shows which playlist backend will be used. Note: This OAuth change does **not** replace the other authentication modes. Standalone `oauth_app` remains a legacy option that works only with an existing compatible app, while `oauth_user` setup and its own app credentials remain unchanged
+- **CONFIG CHANGE:** Changed **TOTP secret handling** for cookie mode. Version 3.5 embeds the current v61 cipher and no longer downloads a third-party secret dictionary. Existing configs keep working with the built-in default, but `SECRET_CIPHER_DICT`, `SECRET_CIPHER_DICT_URL` and `TOTP_VER` no longer control token generation. Future overrides use `TOTP_VERSION` and `TOTP_SECRET_CIPHER_BYTES`, which are validated before use and can be updated from values produced by `spotify_monitor_secret_grabber`
+- **IMPROVE:** Made **large and unchanged playlists faster to process**. Playlist revisions are cached so unchanged track lists are not downloaded again, metadata-only checks skip unnecessary track pages and caches remain bounded during long-running monitoring
+
+**Bug fixes**:
+
+- **BUGFIX:** Correctly detects **added and removed playlists even when the total count stays unchanged**, with accurate console and email messages
+- **BUGFIX:** Prevents **duplicate track notifications after a partial polling failure**. Successful playlists now advance normally while only failed playlists remain pending for another check
+
 # Changes in 3.4.1 (09 Mar 2026)
 
 **Features and Improvements**:
