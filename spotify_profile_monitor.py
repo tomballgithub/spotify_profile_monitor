@@ -784,7 +784,7 @@ from pathlib import Path
 import secrets
 from typing import Optional
 from email.utils import parsedate_to_datetime
-import ntfy
+from jmktools.ntfy import send_ntfy, NTFY_STATUS_HIDE, NTFY_STATUS, NTFY_ALERTS, NTFY_STATUS_HIDE, NTFY_STATUS, NTFY_ALERTS
 
 import urllib3
 if not VERIFY_SSL:
@@ -6440,7 +6440,7 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, m_body_html, SMTP_SSL)
                                     if p_name.upper() == "DISCOVERY ZONE":
-                                        ntfy.send_ntfy(f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, priority=5, msg_type="alert")
+                                        send_ntfy(f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, priority=5, msg_type="alert")
                                     print(f"Check interval:\t\t\t{display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
@@ -6460,7 +6460,7 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, m_body_html, SMTP_SSL)
                                     if (p_name.upper() == "DISCOVERY ZONE") or (p_name_old.upper() == "DISCOVERY ZONE"):
-                                        ntfy.send_ntfy(f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, priority=5, msg_type="alert")
+                                        send_ntfy(f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, priority=5, msg_type="alert")
                                     print(f"Check interval:\t\t\t{display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
@@ -6480,7 +6480,7 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                                         print(f"Sending email notification to {RECEIVER_EMAIL}")
                                         send_email(m_subject, m_body, m_body_html, SMTP_SSL)
                                     if p_name.upper() == "DISCOVERY ZONE":
-                                        ntfy.send_ntfy(f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, priority=5, msg_type="alert")
+                                        send_ntfy(f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, priority=5, msg_type="alert")
                                     print(f"Check interval:\t\t\t{display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
