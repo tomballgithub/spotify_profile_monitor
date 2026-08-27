@@ -1,5 +1,3 @@
-import os
-import sys
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -92,6 +90,25 @@ def test_recovery_actions_preserve_terminal_history(arguments, runner_name, exit
     prepare_mock.assert_not_called()
 
 
+# Verifies direct Doctor startup prints the product banner before running checks
+def test_doctor_action_prints_banner_before_checks(monkeypatch):
+    events = []
+    monkeypatch.setattr(monitor.sys, "argv", ["spotify_profile_monitor", "--doctor", "--config-file", "none", "--env-file", "none"])
+    monkeypatch.setattr(monitor, "CLI_CONFIG_PATH", None)
+    monkeypatch.setattr(monitor, "DOTENV_FILE", "")
+    monkeypatch.setattr(monitor, "TARGET_USER_URI_ID", "")
+    monkeypatch.setattr(monitor, "TOKEN_SOURCE", "cookie")
+    monkeypatch.setattr(monitor, "USER_AGENT", "test-agent")
+    monkeypatch.setattr(monitor, "print_startup_banner", lambda: events.append("banner"))
+    monkeypatch.setattr(monitor, "run_doctor", lambda *args, **kwargs: events.append("doctor") or 1)
+
+    with pytest.raises(SystemExit) as error:
+        monitor.main()
+
+    assert error.value.code == 1
+    assert events == ["banner", "doctor"]
+
+
 # Verifies the webhook delivery test uses the same clean-screen flow as the email test
 def test_webhook_delivery_test_prepares_startup_screen(monkeypatch):
     prepare_mock = Mock()
@@ -127,15 +144,18 @@ def test_generated_config_preserves_secrets_and_updates_regular_values():
 # Verifies safe config writes validate first and back up replacements
 def test_write_config_validates_and_backs_up(tmp_path):
     destination = tmp_path / "profile.conf"
-    destination.write_text("VALUE = 1\n", encoding="utf-8")
+    destination.write_text("TRUNCATE_CHARS = 1\n", encoding="utf-8")
 
-    status = monitor.write_config_file(destination, "VALUE = 2\n")
+    status = monitor.write_config_file(destination, "TRUNCATE_CHARS = 2\n")
 
-    assert destination.read_text(encoding="utf-8") == "VALUE = 2\n"
-    assert Path(status["backup_path"]).read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert destination.read_text(encoding="utf-8") == "TRUNCATE_CHARS = 2\n"
+    assert Path(status["backup_path"]).read_text(encoding="utf-8") == "TRUNCATE_CHARS = 1\n"
     with pytest.raises(SyntaxError):
-        monitor.write_config_file(destination, "VALUE =\n")
-    assert destination.read_text(encoding="utf-8") == "VALUE = 2\n"
+        monitor.write_config_file(destination, "TRUNCATE_CHARS =\n")
+    # Content that parses but is not a plain setting assignment is refused before the file is touched
+    with pytest.raises(ValueError):
+        monitor.write_config_file(destination, "TRUNCATE_CHARS = __import__('os').getpid()\n")
+    assert destination.read_text(encoding="utf-8") == "TRUNCATE_CHARS = 2\n"
 
 
 # Verifies generated recovery commands preserve interpreter and custom paths

@@ -4,13 +4,22 @@ from email import message_from_string
 from email.message import Message
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
 from dotenv import dotenv_values
-from PIL import Image
+# Pillow ships as the optional notification-images extra, so only the artwork tests below depend on it
+Image: Any = None
+try:
+    from PIL import Image as PillowImageModule
+    Image = PillowImageModule
+except ImportError:
+    pass
 
 import spotify_profile_monitor as monitor
+
+requires_pillow = pytest.mark.skipif(Image is None, reason="Pillow is the optional notification-images extra")
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -111,6 +120,12 @@ def test_startup_notification_summaries_respect_master_switches(monkeypatch):
 @pytest.mark.parametrize("url,expected", [("https://discord.com/api/webhooks/123/token", True), ("https://hooks.example.test/discord/path", True), ("http://discord.com/api/webhooks/123/token", False), ("https://user:password@example.test/hook", False), ("https://example.test", False), ("not-a-url", False), ("", False)])
 def test_webhook_url_validation(url, expected):
     assert monitor.validate_webhook_url(url) is expected
+
+
+@pytest.mark.parametrize("provider,expected", [("discord", "Discord"), ("DISCORD", "Discord"), (" Discord ", "Discord"), ("ntfy", "ntfy"), ("NTFY", "ntfy"), ("slack", ""), ("", "")])
+# Verifies user-facing text spells each provider the way its service brands it
+def test_webhook_provider_display_name(provider, expected):
+    assert monitor.webhook_provider_display_name(provider) == expected
 
 
 # Verifies SIGHUP adopts rotated client credentials, clears auth caches and redetects ntfy
@@ -293,6 +308,7 @@ def test_ntfy_access_token_uses_bearer_authentication(monkeypatch):
 
 
 # Verifies ntfy artwork is downloaded with bounds and converted in memory
+@requires_pillow
 def test_ntfy_image_is_bounded_and_built_in_memory(monkeypatch):
     source = BytesIO()
     Image.new("RGB", (320, 640), (12, 34, 56)).save(source, format="PNG")
@@ -309,6 +325,7 @@ def test_ntfy_image_is_bounded_and_built_in_memory(monkeypatch):
 
 
 # Verifies email artwork is downloaded with bounds and resized in memory
+@requires_pillow
 def test_email_artwork_is_bounded_and_built_in_memory(monkeypatch):
     source = BytesIO()
     Image.new("RGB", (640, 320), (12, 34, 56)).save(source, format="PNG")
@@ -487,6 +504,7 @@ def test_email_images_setting_preserves_profile_picture_attachment(monkeypatch):
 
 
 # Verifies inline artwork uses a related MIME container around text alternatives
+@requires_pillow
 def test_send_email_builds_related_inline_artwork_message(monkeypatch):
     source = BytesIO()
     Image.new("RGB", (16, 16), (12, 34, 56)).save(source, format="JPEG")
@@ -604,6 +622,93 @@ def test_generated_config_includes_webhook_settings():
     assert namespace["WEBHOOK_TEMPLATE"]["allowed_mentions"] == {"parse": []}
     assert namespace["WEBHOOK_TRANSFORMS"] == []
     assert namespace["NTFY_ACCESS_TOKEN"] == ""
-    assert namespace["NTFY_IMAGES"] is True
+    # Artwork ships disabled because Pillow is now an optional extra rather than a runtime dependency
+    assert namespace["NTFY_IMAGES"] is False
     assert namespace["EMAIL_IMAGES"] is False
     assert namespace["DETECT_CHANGED_PROFILE_PIC"] is True
+
+
+# Artwork is an optional extra, so the wizard must offer to install it instead of silently enabling a dead setting
+def test_wizard_artwork_prompt_offers_installation_when_pillow_is_missing(monkeypatch):
+    monkeypatch.setattr(monitor, "_wizard_notification_images_dependency_available", lambda: False)
+    monkeypatch.setattr(monitor, "_wizard_ask_yes_no", Mock(side_effect=[True, True]))
+    installs = Mock(return_value=True)
+    monkeypatch.setattr(monitor, "_wizard_install_notification_images_dependency", installs)
+
+    assert monitor._wizard_collect_notification_images("Attach artwork?") is True
+    assert installs.call_count == 1
+
+
+# Declining the feature must never trigger an installation prompt
+def test_wizard_artwork_prompt_skips_installation_when_declined(monkeypatch):
+    monkeypatch.setattr(monitor, "_wizard_notification_images_dependency_available", lambda: False)
+    asks = Mock(side_effect=[False])
+    monkeypatch.setattr(monitor, "_wizard_ask_yes_no", asks)
+    installs = Mock(return_value=True)
+    monkeypatch.setattr(monitor, "_wizard_install_notification_images_dependency", installs)
+
+    assert monitor._wizard_collect_notification_images("Attach artwork?") is False
+    assert asks.call_count == 1
+    assert installs.call_count == 0
+
+
+# A refused installation must leave the setting off rather than enabling artwork that cannot be produced
+def test_wizard_artwork_setting_stays_off_when_installation_fails(monkeypatch):
+    monkeypatch.setattr(monitor, "_wizard_notification_images_dependency_available", lambda: False)
+    monkeypatch.setattr(monitor, "_wizard_ask_yes_no", Mock(side_effect=[True, True]))
+    monkeypatch.setattr(monitor, "_wizard_install_notification_images_dependency", Mock(return_value=False))
+
+    assert monitor._wizard_collect_notification_images("Attach artwork?") is False
+
+
+# The install must take effect in the running process, or the wizard enables a setting this run cannot honor
+@requires_pillow
+def test_refresh_restores_artwork_availability_after_installation(monkeypatch):
+    monkeypatch.setattr(monitor, "PILImage", None)
+    monkeypatch.setattr(monitor, "NOTIFICATION_IMAGES_AVAILABLE", False)
+
+    assert monitor.refresh_notification_images_availability() is True
+    assert monitor.NOTIFICATION_IMAGES_AVAILABLE is True
+    assert monitor.PILImage is not None
+
+
+# Both artwork settings belong to the wizard sections that own them, or re-running setup leaves a stale value
+def test_wizard_sections_own_their_artwork_settings():
+    assert "EMAIL_IMAGES" in monitor.WIZARD_EMAIL_CONFIG_KEYS
+    assert "NTFY_IMAGES" in monitor.WIZARD_WEBHOOK_CONFIG_KEYS
+
+
+# Verifies webhook delivery honors VERIFY_SSL like every other request, so a TLS-inspecting proxy works
+def test_webhook_delivery_honors_the_verification_setting(monkeypatch):
+    configure_webhook(monkeypatch)
+    monkeypatch.setattr(monitor, "VERIFY_SSL", False)
+    webhook_post = Mock(return_value=FakeResponse())
+    monkeypatch.setattr(monitor.WEBHOOK_SESSION, "post", webhook_post)
+
+    assert monitor.send_webhook("Title", "Body", "profile") == 0
+    assert webhook_post.call_args.kwargs["verify"] is False
+
+
+# Verifies every delivery carries the deadline and refuses a redirect, which could retarget the payload
+def test_webhook_delivery_is_bounded_and_does_not_follow_redirects(monkeypatch):
+    configure_webhook(monkeypatch)
+    webhook_post = Mock(return_value=FakeResponse())
+    monkeypatch.setattr(monitor.WEBHOOK_SESSION, "post", webhook_post)
+
+    assert monitor.send_webhook("Title", "Body", "profile") == 0
+    request = webhook_post.call_args
+    assert request.args == (monitor.WEBHOOK_URL,)
+    assert request.kwargs["timeout"] == monitor.WEBHOOK_TIMEOUT_SECONDS
+    assert request.kwargs["allow_redirects"] is False
+
+
+# Verifies a destination replaced mid-delivery is refused rather than posted to blindly
+def test_webhook_delivery_refuses_a_destination_that_stopped_validating(monkeypatch):
+    configure_webhook(monkeypatch)
+    monkeypatch.setattr(monitor, "WEBHOOK_URL", "http://example.test/hook")
+    webhook_post = Mock(return_value=FakeResponse())
+    monkeypatch.setattr(monitor.WEBHOOK_SESSION, "post", webhook_post)
+
+    with pytest.raises(monitor.req.exceptions.InvalidURL):
+        monitor.post_webhook_request(json={"content": "body"})
+    webhook_post.assert_not_called()

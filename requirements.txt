@@ -1,11 +1,18 @@
-requests
-python-dateutil
-urllib3
-pyotp
-pytz
-tzlocal
-python-dotenv
-spotipy
-wcwidth
-pathvalidate
-Pillow>=10.0
+requests>=2.0
+python-dateutil>=2.8
+urllib3>=2.0.7
+pyotp>=2.9.0
+pytz>=2020.1
+tzlocal>=4.0
+python-dotenv>=0.19
+spotipy>=2.24.0
+wcwidth>=0.2.7
+pathvalidate>=3.2.0
+
+# Optional for email and ntfy artwork attachments (EMAIL_IMAGES, NTFY_IMAGES)
+# Pillow 12 dropped Python 3.9, so 3.9 keeps the last release that supports it
+# Pillow>=12.0.0; python_version >= "3.10"
+# Pillow>=11.3.0,<12; python_version < "3.10"
+
+# Optional for browser import feature
+# pycookiecheat>=0.8

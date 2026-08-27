@@ -1,7 +1,16 @@
+from io import StringIO
 from unittest.mock import Mock
+
+import pytest
 
 import requests
 import spotify_profile_monitor as monitor
+
+
+# Provides one in-memory stream that behaves like an interactive terminal
+class TTYBuffer(StringIO):
+    def isatty(self):
+        return True
 
 
 # Verifies Doctor classifies supported Python and missing dependencies
@@ -23,6 +32,27 @@ def test_doctor_explains_browser_import_dependency_scope():
     assert check.detail == "Used only for importing cookies from Chromium-based browsers. Firefox cookie import does not need it"
 
 
+# Pillow moved to an optional extra, so a missing copy must never be reported as a broken installation
+def test_doctor_treats_missing_artwork_support_as_optional():
+    checks = monitor.doctor_check_environment((3, 12, 1), lambda name: None if name == "PIL" else object())
+
+    assert not any(check.status == "FAIL" and "Pillow" in check.label for check in checks)
+    check = next(item for item in checks if "Pillow" in item.label)
+    assert check.status == "WARN"
+    # The rendered command follows the entry point, so assert the part that holds either way
+    assert "-m pip install" in check.detail and "Normal monitoring is unaffected" in check.detail
+
+
+# A user who turned artwork on needs to be told the alerts are silently text-only until Pillow is installed
+def test_doctor_artwork_detail_follows_the_image_settings(monkeypatch):
+    monkeypatch.setattr(monitor, "EMAIL_IMAGES", False)
+    monkeypatch.setattr(monitor, "NTFY_IMAGES", False)
+    assert "currently disabled" in monitor.doctor_notification_images_detail()
+
+    monkeypatch.setattr(monitor, "NTFY_IMAGES", True)
+    assert "text-only until Pillow is installed" in monitor.doctor_notification_images_detail()
+
+
 # Verifies Doctor omits the internal separator resolution for valid settings
 def test_doctor_omits_valid_ascii_separator_resolution(monkeypatch):
     monkeypatch.setattr(monitor, "ASCII_LOG_SEPARATORS", "Auto")
@@ -39,6 +69,23 @@ def test_doctor_reports_invalid_ascii_separator_setting(monkeypatch):
     checks = monitor.doctor_check_configuration()
 
     assert any(check.status == "FAIL" and check.label == "ASCII_LOG_SEPARATORS is invalid" for check in checks)
+
+
+# Verifies Doctor keeps trusted redraw controls when stdout has the runtime sanitizer wrapper
+def test_doctor_progress_redraws_through_terminal_stream(monkeypatch):
+    terminal = TTYBuffer()
+    monkeypatch.setattr(monitor.sys, "stdout", monitor.TerminalStream(terminal))
+
+    monitor._doctor_progress("Spotify authentication")
+    authentication = "* Checking Spotify authentication ..."
+    assert terminal.getvalue() == "\r" + authentication
+
+    monitor._doctor_progress("metadata")
+    metadata = "* Checking metadata ..."
+    assert terminal.getvalue() == "\r" + authentication + "\r" + (" " * len(authentication)) + "\r" + "\r" + metadata
+
+    monitor._doctor_progress_clear()
+    assert terminal.getvalue().endswith("\r" + metadata + "\r" + (" " * len(metadata)) + "\r")
 
 
 # Verifies missing cookie authentication remains actionable and secret-safe
@@ -175,6 +222,18 @@ def test_doctor_report_rendering_redacts_secrets(monkeypatch):
     assert "COOKIE-SECRET-SENTINEL" not in rendered
 
 
+# Verifies the preflight notice reaches the user before any check runs rather than inside the report
+def test_doctor_preflight_notice_precedes_the_report(monkeypatch, capsys):
+    monkeypatch.setattr(monitor, "build_doctor_report", lambda *args, **kwargs: monitor.DoctorReport(checks=[monitor.make_doctor_check("Environment", "PASS", "ok")]))
+    monkeypatch.setattr(monitor.sys, "stdin", Mock(isatty=lambda: False))
+
+    monitor.run_doctor()
+
+    output = capsys.readouterr().out
+    assert "Running preflight checks. No files will be written. Interactive email and webhook tests run only after separate approval." in output
+    assert output.index("Running preflight checks.") < output.index("Doctor\n")
+
+
 # Verifies Doctor visually attaches explanatory details to their check rows
 def test_doctor_report_indents_check_details():
     report = monitor.DoctorReport(checks=[monitor.make_doctor_check("Configuration", "PASS", "Log destination appears writable", "Path: spotify_profile_monitor")])
@@ -182,6 +241,23 @@ def test_doctor_report_indents_check_details():
     rendered = monitor.render_doctor_report(report)
 
     assert "[PASS] Log destination appears writable\n  Path: spotify_profile_monitor" in rendered
+
+
+# Verifies the delivery-test gate still recognizes the readiness check once its label names the provider
+def test_delivery_gate_matches_the_provider_named_label(monkeypatch):
+    monkeypatch.setattr(monitor, "WEBHOOK_PROVIDER", "discord")
+    label = f"{monitor.WEBHOOK_READY_CHECK_LABEL} for {monitor.webhook_provider_display_name()}"
+    assert label.endswith("for Discord")
+    report = monitor.DoctorReport(checks=[monitor.make_doctor_check("Notifications", "PASS", label)])
+    consent = Mock(return_value=False)
+    monkeypatch.setattr(monitor.sys, "stdin", Mock(isatty=lambda: True))
+    monkeypatch.setattr(monitor.sys, "stdout", Mock(isatty=lambda: True, write=lambda *args: None, flush=lambda: None))
+    monkeypatch.setattr(monitor, "_doctor_ask_yes_no", consent)
+
+    monitor._doctor_offer_notification_tests(report)
+
+    assert consent.call_count == 1
+    assert "Send one test webhook through Discord now?" in consent.call_args[0][0]
 
 
 # Verifies disabled notifications cause no network delivery attempts
@@ -212,3 +288,32 @@ def test_load_config_reports_syntax_line(tmp_path):
     assert loaded is False
     assert errors[0].status == "FAIL"
     assert "line 1" in errors[0].detail
+
+
+# Exported secrets are a documented alternative to a dotenv file, so they must apply when no file is loaded
+def test_environment_secrets_apply_without_a_dotenv_file(monkeypatch):
+    monkeypatch.setattr(monitor.sys, "argv", ["spotify_profile_monitor", "--doctor", "--env-file", "none"])
+    monkeypatch.setattr(monitor, "run_doctor", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(monitor, "NTFY_ACCESS_TOKEN", "", raising=False)
+    monkeypatch.setenv("NTFY_ACCESS_TOKEN", "tk_from_environment")
+
+    with pytest.raises(SystemExit):
+        monitor.main()
+
+    assert monitor.NTFY_ACCESS_TOKEN == "tk_from_environment"
+
+
+# Each secret is attributed to the source it actually came from, so the report can name the dotenv path
+def test_secret_sources_split_by_origin(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("SMTP_PASSWORD=from-file\n", encoding="utf-8")
+    monkeypatch.setattr(monitor, "SMTP_PASSWORD", "from-file", raising=False)
+    monkeypatch.setattr(monitor, "WEBHOOK_URL", "https://ntfy.sh/topic", raising=False)
+    monkeypatch.setattr(monitor, "SP_DC_COOKIE", "your_sp_dc_cookie_value", raising=False)
+    monkeypatch.setenv("WEBHOOK_URL", "https://ntfy.sh/topic")
+
+    from_file, from_environment, from_settings = monitor.doctor_secret_sources(str(env_file))
+
+    assert "SMTP_PASSWORD" in from_file
+    assert "WEBHOOK_URL" in from_environment
+    assert "SP_DC_COOKIE" not in from_file + from_environment + from_settings
