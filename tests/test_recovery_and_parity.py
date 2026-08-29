@@ -179,14 +179,15 @@ def test_config_load_ignores_retired_settings(tmp_path, capsys):
     assert "are ignored" in output
 
 
-# Verifies retired settings are reported to the caller so Doctor can surface them without printing
-def test_config_load_reports_retired_settings_to_caller(tmp_path):
+# Verifies captured retired settings are deferred so the caller can report them after any screen clear
+def test_config_load_reports_retired_settings_to_caller(tmp_path, capsys):
     config_path = tmp_path / "legacy.conf"
     config_path.write_text("TOTP_VER = 0\nTRUNCATE_CHARS = 120\n", encoding="utf-8")
     retired = []
 
-    assert monitor.load_config_file(config_path, namespace={}, report_errors=False, retired_out=retired) is True
+    assert monitor.load_config_file(config_path, namespace={}, retired_out=retired) is True
     assert retired == ["TOTP_VER"]
+    assert capsys.readouterr().out == ""
 
 
 # Verifies ignoring retired names does not weaken rejection of any other unknown setting
@@ -297,7 +298,7 @@ def test_doctor_build_reports_progress(monkeypatch):
     monkeypatch.setattr(monitor, "doctor_check_environment", lambda *args: [])
     monkeypatch.setattr(monitor, "doctor_check_configuration", lambda *args: [])
     monkeypatch.setattr(monitor, "doctor_check_authentication", lambda *args: [])
-    monkeypatch.setattr(monitor, "doctor_check_optional_oauth", lambda: [])
+    monkeypatch.setattr(monitor, "doctor_check_optional_oauth", lambda report: [])
     monkeypatch.setattr(monitor, "doctor_check_connectivity", lambda *args: [])
     monkeypatch.setattr(monitor, "doctor_check_target", lambda *args: [])
     monkeypatch.setattr(monitor, "doctor_check_notifications", lambda: [])
@@ -305,7 +306,7 @@ def test_doctor_build_reports_progress(monkeypatch):
 
     monitor.build_doctor_report(progress=phases.append)
 
-    assert phases == ["environment", "configuration", "Spotify authentication", "metadata", "connectivity and target", "notifications"]
+    assert phases == ["environment", "configuration", "Spotify authentication", "connectivity and target", "metadata", "notifications"]
 
 
 # Verifies Doctor preserves a startup failure for an explicitly missing dotenv file

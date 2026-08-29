@@ -2,6 +2,18 @@
 
 This is a high-level summary of the most important changes.
 
+# Changes in 3.8.2 (28 Aug 2026)
+
+Version **3.8.2** keeps **configuration upgrade notes visible** after startup redraws, makes explicit **`--verbose` and `--debug` flags override config defaults**, shows the effective **`JSON_DIR`** path, stops settings, diagnostics and fallback notices from being coloured as errors and makes **Doctor verify real legacy playlist access** instead of token issuance alone.
+
+**Bug fixes**:
+
+- **BUGFIX:** **Accurate error colouring** - Lines that only mention a problem word are no longer painted red. The **`Error retry timer`** row shown by **`--verbose`**, every **`[DEBUG]`** trace line, including the ones recording a retried or handled request, and the notice about switching to the web-player backend now keep their normal colours, while real failures stay red
+- **BUGFIX:** **Visible configuration upgrade notes** - Settings retired from older official config templates are still ignored so upgraded files continue to work, but their cleanup note is now deferred until after the startup screen clear. The note remains readable while monitoring continues
+- **BUGFIX:** **Reliable diagnostic flags** - Explicit **`--verbose`** and **`--debug`** flags now stay enabled after an auto-discovered or selected config file loads, even when that file leaves the matching setting disabled
+- **BUGFIX:** **JSON history destination in verbose startup** - `--verbose` and `--debug` now show the effective **`JSON_DIR`** location alongside other file destinations. The complete startup log includes it too
+- **BUGFIX:** **Accurate Doctor metadata result** - When optional legacy OAuth app credentials and a target playlist are available, **`--doctor`** now makes the same kind of live playlist metadata request used by monitoring. A token that Spotify issues but cannot use on the playlist endpoint is reported as a warning with the automatic web-player fallback, instead of a misleading legacy metadata success
+
 # Changes in 3.8.1 (27 Aug 2026)
 
 Version **3.8.1** adds a dedicated **`JSON_DIR`** setting for follower and following plus playlist history files. It also makes rejected config content actionable by showing the config path plus exact line number and reason without clearing the error into guided setup.

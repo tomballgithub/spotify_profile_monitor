@@ -200,6 +200,7 @@ def test_startup_summary_has_concise_and_full_views(monkeypatch, capsys):
     monkeypatch.setattr(monitor, "PROFILE_NOTIFICATION", False)
     monkeypatch.setattr(monitor, "ERROR_NOTIFICATION", False)
     monkeypatch.setattr(monitor, "WEBHOOK_ENABLED", False)
+    monkeypatch.setattr(monitor, "JSON_DIR", "state/json")
     rows = monitor.build_startup_summary("target.user", None, None, None)
 
     monitor.emit_startup_summary(rows, show_full=False)
@@ -209,9 +210,23 @@ def test_startup_summary_has_concise_and_full_views(monkeypatch, capsys):
 
     assert "* Target:" in concise
     assert "* More details:" in concise
+    assert "* JSON history directory:" not in concise
     assert "* Error retry timer:" not in concise
+    assert "* JSON history directory:" in complete
+    assert str(Path("state/json").resolve()) in complete
     assert "* Error retry timer:" in complete
     assert "* More details:" not in complete
+
+
+# Verifies the default JSON history destination is shown as its effective directory path
+def test_startup_summary_shows_current_json_directory_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(monitor, "JSON_DIR", "")
+
+    rows = monitor.build_startup_summary("target.user", None, None, None)
+    json_row = next(row for row in rows if row.label == "JSON history directory")
+
+    assert json_row.value == str(tmp_path)
 
 
 # Verifies setup review can edit one section without losing other answers

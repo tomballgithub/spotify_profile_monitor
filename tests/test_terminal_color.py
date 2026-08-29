@@ -49,6 +49,36 @@ def test_startup_summary_rows_are_not_block_colored(colored):
         assert colored["info"] not in monitor._colorize_line(line)
 
 
+# Verifies the timer row whose label names a problem word reports a setting, so it keeps the plain label and
+# green duration of every other summary row instead of turning red
+def test_startup_summary_timer_row_is_not_error_colored(colored):
+    line = "* Error retry timer:            3 minutes"
+
+    result = monitor._colorize_line(line)
+
+    assert monitor.ANSI_ESCAPE_RE.sub("", result) == line
+    assert colored["error"] not in result
+    assert f"{colored['duration']}3 minutes{monitor.ANSI_RESET}" in result
+
+
+# Verifies a debug trace line and a fallback notice are not painted red, while a real problem still is. A debug
+# line records an attempt the tool then handles, and a backend switch reports a recovery that worked
+@pytest.mark.parametrize("line", [
+    "[DEBUG 15:57:30] HTTP GET https://api.spotify.com/v1 [connectivity check], timeout=5, verify_ssl=True",
+    "[DEBUG 15:57:30] HTTP HEAD https://open.spotify.com/ [server time] timeout=15",
+    "[DEBUG 16:05:53] _spotify_get_playlist_info_api(): failed for uri=spotify:playlist:64038SKKJNi7GIAh16NlRr: 403 Client Error: Forbidden for url",
+    "* Playlist metadata switched to the web-player backend after legacy API failures",
+])
+def test_diagnostic_details_and_fallback_notices_are_not_error_colored(colored, line):
+    assert colored["error"] not in monitor._colorize_line(line)
+
+
+# Verifies the same words still paint a line that really reports a problem
+@pytest.mark.parametrize("line", ["Spotify follow verification failed: bad token", "* Error: request timeout after 15 seconds"])
+def test_real_problem_lines_stay_error_colored(colored, line):
+    assert monitor._colorize_line(line).startswith(colored["error"])
+
+
 # Verifies a static count stays plain and only a reported change colours its numbers
 def test_static_counts_stay_plain_and_changes_are_colored(colored):
     for line in ("Followers:\t\t\t98", "Followings:\t\t\t302", "Public playlists:\t\t41", "Number of friends:\t\t7"):

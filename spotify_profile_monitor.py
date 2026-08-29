@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Author: Michal Szymanski <misiektoja-github@rm-rf.ninja>
-v3.8.1
+v3.8.2
 
 OSINT tool implementing real-time tracking of Spotify users activities and profile changes including playlists:
 https://github.com/misiektoja/spotify_profile_monitor/
@@ -22,7 +22,7 @@ pathvalidate (optional, needed by --export-all-playlists)
 Pillow (needed for email and ntfy artwork attachments)
 """
 
-VERSION = "3.8.1"
+VERSION = "3.8.2"
 
 # API 401 error means sp_dc cookie has expired. Lasts one year. 03/15/2025
 
@@ -1397,6 +1397,17 @@ _PERCENTAGE_RE = re.compile(r"\(\d{1,3}%")
 _BOOLEAN_TRUE_RE = re.compile(r"\bTrue\b|\bEnabled\b")
 _BOOLEAN_FALSE_RE = re.compile(r"\bFalse\b|\bDisabled\b")
 _NOTIFICATION_SUMMARY_STATE_RE = re.compile(r"^(\* Notifications \((?:email|webhook)\):\s+)(On|Off)(.*)$")
+# Startup summary row whose label happens to contain a problem word. It reports a configured setting, not a
+# failure, so the whole-line error style must skip it and leave its value coloured like any other row
+_STARTUP_SUMMARY_TIMER_ROW_RE = re.compile(r"^\* error retry timer:")
+# Words that report a problem. The same word used as a key in a 'key=value' diagnostic detail names a setting
+# such as 'timeout=15' or a counter such as 'failures=3', so it leaves its line unpainted
+_ERROR_KEYWORD_RE = re.compile(r"\b(?:failures?|failed|forbidden|timeout|disappeared)\b(?!\s*=)")
+# A backend fallback notice reports a recovery that worked, not the failure that made the tool switch over
+_RECOVERY_NOTICE_RE = re.compile(r"\bswitched to\b")
+# A debug trace line records what the tool tried, including attempts that fail and are then handled, so it keeps
+# its own colours instead of being painted as the failure it reports
+_DEBUG_LINE_RE = re.compile(r"^\[debug \d{2}:\d{2}:\d{2}\]")
 # Doctor status markers, coloured with the same theme parts the reference tools use for them
 _DOCTOR_MARK_RE = re.compile(r"^\[(PASS|WARN|FAIL|SKIP)\]")
 _DOCTOR_MARK_STYLES = {"PASS": "boolean_true", "WARN": "warning", "FAIL": "error", "SKIP": "info"}
@@ -1698,8 +1709,13 @@ def _colorize_line(line):
 
     # Block highlighting (activity headers, errors, warnings, signals)
     # Applied last so the internal colours above are preserved through the nesting logic
-    is_error = any(w in lowered for w in ("failure", "forbidden", "timeout", "critical:", "failed", "disappeared")) or (
-        "* error" in lowered and "[errors =" not in lowered
+    is_summary_timer_row = bool(_STARTUP_SUMMARY_TIMER_ROW_RE.match(lowered))
+    is_recovery_notice = bool(_RECOVERY_NOTICE_RE.search(lowered))
+    is_debug_line = bool(_DEBUG_LINE_RE.match(lowered))
+    is_error = not is_summary_timer_row and not is_recovery_notice and not is_debug_line and (
+        bool(_ERROR_KEYWORD_RE.search(lowered)) or "critical:" in lowered or (
+            "* error" in lowered and "[errors =" not in lowered
+        )
     )
     is_warning = any(w in lowered for w in ("* warning:", "caution:")) and "[warnings =" not in lowered
     is_signal = "* signal" in lowered and "received" in lowered
@@ -7249,6 +7265,14 @@ def describe_retired_settings(names: Sequence[str], path: Any = "") -> str:
     return sentence
 
 
+# Prints one deferred upgrade note for retired configuration settings
+def report_retired_settings(names: Sequence[str], path: Any = "", stream=None) -> None:
+    if not names:
+        return
+    quoted_path = f"'{path}'" if path else ""
+    print(f"* Note: {describe_retired_settings(names, quoted_path)}", file=stream or sys.stdout)
+
+
 # Returns the setting names declared by the trusted built-in config template
 def _config_allowed_names() -> FrozenSet[str]:
     template_tree = ast.parse(CONFIG_BLOCK, "<built-in-config>", "exec")
@@ -7991,9 +8015,8 @@ def load_config_file(config_path, namespace=None, error_out=None, report_errors=
         selected_namespace.update(parsed_values)
         if retired_out is not None:
             retired_out.extend(retired_settings)
-        if retired_settings and report_errors:
-            quoted_path = "'" + str(config_path) + "'"
-            print(f"* Note: {describe_retired_settings(retired_settings, quoted_path)}")
+        if retired_settings and report_errors and retired_out is None:
+            report_retired_settings(retired_settings, config_path)
         return True
     except SyntaxError as exc:
         details = [f"Config file '{config_path}' has invalid Python syntax"]
@@ -8334,6 +8357,7 @@ class DoctorCheck:
 class DoctorReport:
     checks: List[DoctorCheck] = field(default_factory=list)
     access_token: Optional[str] = field(default=None, repr=False)
+    target_profile: Optional[dict] = field(default=None, repr=False)
     authentication_error: str = ""
     authentication_advice: Optional[RecoveryAdvice] = None
 
@@ -8365,6 +8389,7 @@ def build_startup_summary(target: str, config_path, env_path, output_path) -> Li
         StartupSummaryRow("All public playlists", str(GET_ALL_PLAYLISTS)),
         StartupSummaryRow("Liveness output", display_time(LIVENESS_CHECK_INTERVAL) if LIVENESS_CHECK_INTERVAL else "Disabled", concise=bool(LIVENESS_CHECK_INTERVAL)),
         StartupSummaryRow("CSV output", CSV_FILE or "Disabled", concise=bool(CSV_FILE)),
+        StartupSummaryRow("JSON history directory", str(Path(JSON_DIR).expanduser().resolve()) if JSON_DIR else str(Path.cwd())),
         StartupSummaryRow("Ignored-playlist file", PLAYLISTS_TO_SKIP_FILE or "Disabled", concise=bool(PLAYLISTS_TO_SKIP_FILE)),
         StartupSummaryRow("Spotify playlists ignored", str(IGNORE_SPOTIFY_PLAYLISTS)),
         StartupSummaryRow("Profile picture display", imgcat_exe or "Disabled", concise=bool(imgcat_exe)),
@@ -8695,15 +8720,15 @@ def doctor_check_target(report: DoctorReport, target_value=None) -> List[DoctorC
     if not report.access_token:
         return [make_doctor_check("Target", "WARN", f"Target '{target_id}' live check was skipped", "Authentication did not produce an access token", "Fix authentication then rerun Doctor")]
     try:
-        spotify_get_user_info(report.access_token, target_id, False, 0)
+        report.target_profile = spotify_get_user_info(report.access_token, target_id, True, 0)
         return [make_doctor_check("Target", "PASS", f"Target '{target_id}' can be monitored", "A live Spotify profile request succeeded")]
     except Exception as exc:
         advice = classify_recovery_error(exc, "target", target_user_id=target_id)
         return [make_doctor_check("Target", "FAIL", advice.summary, advice.detail, advice.fix, advice)]
 
 
-# Checks optional legacy OAuth metadata credentials without writing a token cache
-def doctor_check_optional_oauth() -> List[DoctorCheck]:
+# Checks optional legacy OAuth credentials against one target playlist without writing a token cache
+def doctor_check_optional_oauth(report: Optional[DoctorReport] = None) -> List[DoctorCheck]:
     client_present = bool(SP_APP_CLIENT_ID and SP_APP_CLIENT_ID != "your_spotify_app_client_id")
     secret_present = bool(SP_APP_CLIENT_SECRET and SP_APP_CLIENT_SECRET != "your_spotify_app_client_secret")
     if not client_present and not secret_present:
@@ -8713,15 +8738,27 @@ def doctor_check_optional_oauth() -> List[DoctorCheck]:
         return [make_doctor_check("Metadata", "WARN", "Legacy OAuth metadata credentials are incomplete", "The web-player playlist backend remains available", recovery_fix_with_guide("Set both values or remove both", OAUTH_GUIDE_URL), advice)]
     global SP_APP_TOKENS_FILE
     saved_cache = SP_APP_TOKENS_FILE
+    token_issued = False
     try:
         SP_APP_TOKENS_FILE = ""
         token = spotify_get_access_token_from_oauth_app(SP_APP_CLIENT_ID, SP_APP_CLIENT_SECRET)
         if not token:
             raise RuntimeError("Spotify did not provide an OAuth app token")
-        return [make_doctor_check("Metadata", "PASS", "Legacy OAuth metadata authentication succeeded", "A memory-only token was used and no OAuth cache was written")]
+        token_issued = True
+        target_playlists = report.target_profile.get("sp_user_public_playlists_uris", []) if report is not None and isinstance(report.target_profile, dict) else []
+        playlist_uri = next((item.get("uri") for item in target_playlists if isinstance(item, dict) and item.get("uri")), None)
+        if playlist_uri is None:
+            return [make_doctor_check("Metadata", "WARN", "Legacy OAuth token issued, but playlist access was not checked", "No public target playlist was available. Normal monitoring can use the web-player backend if the legacy API is restricted")]
+        _spotify_get_playlist_info_api(token, playlist_uri, False, oauth_app=True)
+        return [make_doctor_check("Metadata", "PASS", "Legacy OAuth playlist metadata access succeeded", f"A live metadata request for {playlist_uri} succeeded with a memory-only token. No OAuth cache was written")]
     except Exception as exc:
         advice = classify_recovery_error(exc, "metadata")
-        return [make_doctor_check("Metadata", "WARN", "Legacy OAuth metadata access is unavailable", advice.detail, advice.fix, advice)]
+        detail = advice.detail
+        if detail:
+            detail = detail.rstrip(".") + ". "
+        detail += "Normal monitoring will use the web-player backend"
+        label = "Legacy OAuth token issued, but playlist metadata access is unavailable" if token_issued else "Legacy OAuth metadata access is unavailable"
+        return [make_doctor_check("Metadata", "WARN", label, detail, advice.fix, advice)]
     finally:
         SP_APP_TOKENS_FILE = saved_cache
 
@@ -8891,12 +8928,12 @@ def build_doctor_report(target_value=None, config_path=None, env_path=None, star
         progress("Spotify authentication")
     report.checks.extend(doctor_check_authentication(report))
     if progress is not None:
-        progress("metadata")
-    report.checks.extend(doctor_check_optional_oauth())
-    if progress is not None:
         progress("connectivity and target")
     report.checks.extend(doctor_check_connectivity(report))
     report.checks.extend(doctor_check_target(report, target_value))
+    if progress is not None:
+        progress("metadata")
+    report.checks.extend(doctor_check_optional_oauth(report))
     if progress is not None:
         progress("notifications")
     report.checks.extend(doctor_check_notifications())
@@ -11019,6 +11056,15 @@ def cli_action_conflicts(args, allowed: Collection[str]) -> List[str]:
     return conflicts
 
 
+# Applies diagnostic flags both before config error reporting and after config precedence resolution
+def apply_diagnostic_cli_overrides(args: argparse.Namespace) -> None:
+    global DEBUG_MODE, VERBOSE_MODE
+    if args.debug_mode is not None:
+        DEBUG_MODE = args.debug_mode
+    if args.verbose_mode is not None:
+        VERBOSE_MODE = args.verbose_mode
+
+
 # Parses configuration and command-line options then runs the selected operation
 def main():
     global CLI_CONFIG_PATH, DOTENV_FILE, LOCAL_TIMEZONE, LIVENESS_CHECK_COUNTER, SP_DC_COOKIE, SP_APP_CLIENT_ID, SP_APP_CLIENT_SECRET, SP_USER_CLIENT_ID, SP_USER_CLIENT_SECRET, LOGIN_REQUEST_BODY_FILE, CLIENTTOKEN_REQUEST_BODY_FILE, REFRESH_TOKEN, LOGIN_URL, USER_AGENT, DEVICE_ID, SYSTEM_ID, USER_URI_ID, CSV_FILE, JSON_DIR, PLAYLISTS_TO_SKIP_FILE, FILE_SUFFIX, DISABLE_LOGGING, DEBUG_MODE, VERBOSE_MODE, SP_LOGFILE, PROFILE_NOTIFICATION, EMAIL_IMAGES, SPOTIFY_CHECK_INTERVAL, SPOTIFY_ERROR_INTERVAL, FOLLOWERS_FOLLOWINGS_NOTIFICATION, ERROR_NOTIFICATION, DETECT_CHANGED_PROFILE_PIC, DETECT_CHANGES_IN_PLAYLISTS, GET_ALL_PLAYLISTS, imgcat_exe, SMTP_PASSWORD, SP_SHA256, stdout_bck, APP_VERSION, CPU_ARCH, OS_BUILD, PLATFORM, OS_MAJOR, OS_MINOR, CLIENT_MODEL, TOKEN_SOURCE, CLEAN_OUTPUT, SP_APP_TOKENS_FILE, SP_USER_TOKENS_FILE, TARGET_USER_URI_ID, TRUNCATE_CHARS, NTFY_IMAGES, COLORED_OUTPUT, COLOR_THEME
@@ -11486,10 +11532,7 @@ def main():
         if conflicts:
             parser.error(f"{action_name} cannot be combined with " + ", ".join(conflicts))
 
-    if args.debug_mode is not None:
-        DEBUG_MODE = args.debug_mode
-    if args.verbose_mode is not None:
-        VERBOSE_MODE = args.verbose_mode
+    apply_diagnostic_cli_overrides(args)
 
     if args.setup:
         if args.config_file is not None and args.config_file.casefold() == "none":
@@ -11539,9 +11582,9 @@ def main():
             print(render_recovery_error(RecoveryError(advice)))
             sys.exit(1)
 
+    config_retired = []
     if cfg_path:
         config_errors = []
-        config_retired = []
         if not load_config_file(cfg_path, error_out=config_errors, report_errors=not args.doctor, retired_out=config_retired):
             if args.doctor:
                 doctor_startup_checks.extend(config_errors)
@@ -11550,15 +11593,20 @@ def main():
         elif config_retired and args.doctor:
             doctor_startup_checks.append(make_doctor_check("Configuration", "WARN", "Configuration file contains removed settings", describe_retired_settings(config_retired, cfg_path), ""))
 
+    # Config loading can replace these globals, so reapply explicit flags to preserve CLI precedence
+    apply_diagnostic_cli_overrides(args)
+
     if len(sys.argv) == 1 and not TARGET_USER_URI_ID:
         prepare_startup_screen(require_input=True)
         print_startup_banner()
+        report_retired_settings(config_retired, cfg_path)
         _wizard_welcome()
         sys.exit(0 if sys.stdin.isatty() else 1)
 
     debug_print(f"CLI override: DEBUG_MODE={DEBUG_MODE}")
 
     if args.import_browser_cookie:
+        report_retired_settings(config_retired, cfg_path)
         try:
             run_browser_cookie_import(browser=args.browser or "firefox", browser_profile=args.browser_profile, cookie_file=args.cookie_file, env_file=args.env_file or DOTENV_FILE or None, force=args.force, config_path=args.config_file, target=args.user_id or TARGET_USER_URI_ID)
         except BrowserCookieImportError as exc:
@@ -11652,6 +11700,7 @@ def main():
     init_color_output(stdout_bck)
 
     if args.set_sp_dc:
+        report_retired_settings(config_retired, cfg_path)
         try:
             run_set_sp_dc(env_file=DOTENV_FILE or None, config_path=cfg_path or CLI_CONFIG_PATH)
         except SpDcConfigurationError as exc:
@@ -11660,6 +11709,7 @@ def main():
         sys.exit(0)
 
     if args.set_webhook_url:
+        report_retired_settings(config_retired, cfg_path)
         try:
             run_set_webhook_url(env_file=DOTENV_FILE or None, config_path=cfg_path)
         except WebhookConfigurationError as exc:
@@ -11741,6 +11791,7 @@ def main():
 
     if args.send_test_webhook:
         prepare_startup_screen()
+        report_retired_settings(config_retired, cfg_path)
         print("* Sending a test webhook ...\n")
         if send_webhook("Spotify Profile Monitor test", "Your webhook alerts are set up correctly.", "profile", force=True) == 0:
             print("* Test webhook sent successfully !")
@@ -11759,6 +11810,8 @@ def main():
         prepare_startup_screen()
 
         print_startup_banner()
+
+    report_retired_settings(config_retired, cfg_path, stream=sys.stderr if CLEAN_OUTPUT else None)
 
     local_tz = None
     if LOCAL_TIMEZONE == "Auto":
@@ -12190,6 +12243,13 @@ def main():
         FOLLOWERS_FOLLOWINGS_NOTIFICATION = False
         ERROR_NOTIFICATION = False
 
+    try:
+        JSON_DIR = prepare_json_directory(JSON_DIR)
+    except (OSError, TypeError) as exc:
+        advice = classify_recovery_error(exc, "file_write", f"JSON history directory cannot be prepared: {exc}")
+        print(render_recovery_error(RecoveryError(advice)))
+        sys.exit(1)
+
     startup_rows = build_startup_summary(args.user_id, cfg_path, env_path, FINAL_LOG_PATH)
     emit_startup_summary(startup_rows, show_full=bool(VERBOSE_MODE or DEBUG_MODE))
 
@@ -12199,13 +12259,6 @@ def main():
         signal.signal(signal.SIGTRAP, increase_check_signal_handler)
         signal.signal(signal.SIGABRT, decrease_check_signal_handler)
         signal.signal(signal.SIGHUP, reload_secrets_signal_handler)
-
-    try:
-        JSON_DIR = prepare_json_directory(JSON_DIR)
-    except (OSError, TypeError) as exc:
-        advice = classify_recovery_error(exc, "file_write", f"JSON history directory cannot be prepared: {exc}")
-        print(render_recovery_error(RecoveryError(advice)))
-        sys.exit(1)
 
     spotify_profile_monitor_uri(args.user_id, CSV_FILE, playlists_to_skip)
 
