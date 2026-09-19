@@ -1160,7 +1160,6 @@ from pathlib import Path, PureWindowsPath
 import secrets
 import socket
 from typing import Any, Callable, Collection, Dict, FrozenSet, List, Optional, Sequence, Tuple, Type, cast
-from jmktools.ntfy import send_ntfy, NTFY_STATUS_HIDE, NTFY_STATUS, NTFY_ALERTS, NTFY_STATUS_HIDE, NTFY_STATUS, NTFY_ALERTS
 
 import urllib3
 
@@ -13061,8 +13060,8 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                                     selected_track_image_url = select_notification_image_url(p_image_url, album_notification_image_url, image_url)
                                     selected_track_email_image_url = select_notification_image_url(p_image_url, album_notification_image_url)
                                     send_notification_channels("profile", m_subject, m_body, m_body_html, email_enabled=PROFILE_NOTIFICATION, image_url=selected_track_image_url, email_image_url=selected_track_email_image_url)
-                                    if p_name.upper() == "DISCOVERY ZONE":
-                                        send_ntfy(f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, priority=5, msg_type="alert")
+                                    if p_name.upper() == "DISCOVERY ZONE" and WEBHOOK_ENABLED:
+                                        send_webhook("Discovery Zone Change Detected!", m_subject + "\n" + m_body, "profile", force=True)
                                     print(f"Check interval:\t\t\t{display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
@@ -13079,8 +13078,8 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                                     m_body = f"{p_message}\nCheck interval: {display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     m_body_html = f"<html><head></head><body>Playlist '<b>{escape(p_name_old)}</b>': name changed to new name '<b><a href=\"{escape_html_attr(p_url)}\">{escape(p_name)}</a></b>'<br><br>Check interval: <b>{escape(display_time(SPOTIFY_CHECK_INTERVAL))}</b> ({escape(get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}</body></html>"
                                     send_notification_channels("profile", m_subject, m_body, m_body_html, email_enabled=PROFILE_NOTIFICATION, image_url=select_notification_image_url(p_image_url, profile_image_url=image_url), email_image_url=p_image_url)
-                                    if (p_name.upper() == "DISCOVERY ZONE") or (p_name_old.upper() == "DISCOVERY ZONE"):
-                                        send_ntfy(f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, priority=5, msg_type="alert")
+                                    if ((p_name.upper() == "DISCOVERY ZONE") or (p_name_old.upper() == "DISCOVERY ZONE")) and WEBHOOK_ENABLED:
+                                        send_webhook("Discovery Zone Change Detected!", m_subject + "\n" + m_body, "profile", force=True)
                                     print(f"Check interval:\t\t\t{display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
@@ -13097,8 +13096,8 @@ def spotify_profile_monitor_uri(user_uri_id, csv_file_name, playlists_to_skip):
                                     m_body = f"{p_message}\nCheck interval: {display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)}){get_cur_ts(nl_ch + 'Timestamp: ')}"
                                     m_body_html = f"<html><head></head><body>Playlist '<b><a href=\"{escape_html_attr(p_url)}\">{escape(p_name)}</a></b>' description changed from:<br><br>'<i>{escape(p_descr_old)}</i>'<br><br>to:<br><br>'<i>{escape(p_descr)}</i>'<br><br>Check interval: <b>{escape(display_time(SPOTIFY_CHECK_INTERVAL))}</b> ({escape(get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True))}){get_cur_ts('<br>Timestamp: ')}</body></html>"
                                     send_notification_channels("profile", m_subject, m_body, m_body_html, email_enabled=PROFILE_NOTIFICATION, image_url=select_notification_image_url(p_image_url, profile_image_url=image_url), email_image_url=p_image_url)
-                                    if p_name.upper() == "DISCOVERY ZONE":
-                                        send_ntfy(f"Discovery Zone Change Detected!", m_subject + "\n" + m_body, priority=5, msg_type="alert")
+                                    if p_name.upper() == "DISCOVERY ZONE" and WEBHOOK_ENABLED:
+                                        send_webhook("Discovery Zone Change Detected!", m_subject + "\n" + m_body, "profile", force=True)
                                     print(f"Check interval:\t\t\t{display_time(SPOTIFY_CHECK_INTERVAL)} ({get_range_of_dates_from_tss(int(time.time()) - SPOTIFY_CHECK_INTERVAL, int(time.time()), short=True)})")
                                     print_cur_ts("Timestamp:\t\t\t")
 
